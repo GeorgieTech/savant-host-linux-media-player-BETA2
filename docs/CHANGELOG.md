@@ -1,5 +1,11 @@
 # Changelog
 
+## After V0.10 — hot-path cost
+
+- Sign-in and TOSLINK skip no longer ffprobe every library file
+- `/api/now` reuses host / RAM / disk for 5 seconds
+- Notes: `docs/V010_DEBUG_NOTES.txt`, `docs/PERFORMANCE_RECOMMENDATIONS.txt`
+
 ## V0.10 — TOSLINK EQ
 
 - DLNA: GetCurrentTransportActions, UPnP SOAP faults, UPnP HTTP SERVER header, HTTPS rejected with a clear error, ffmpeg play errors surfaced
