@@ -10,6 +10,7 @@ Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 - `GET /api/library` — tracks in `/data/music` (signed in)
 - `GET /api/media?name=` — audio stream with HTTP Range (signed in)
 - `POST /api/upload` — multipart `file` fields into `/data/music`
+- `POST /api/library/save` — `{tags: {name: genre}, delete: [name]}` after Manage
 - `POST /api/tag` — `{name, genre}` (empty genre clears)
 - `POST /api/delete` — `{name}`
 

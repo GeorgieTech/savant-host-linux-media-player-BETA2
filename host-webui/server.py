@@ -410,6 +410,45 @@ def delete_track(name):
     return True, ""
 
 
+def commit_library(tags_map, delete_names):
+    errors = []
+    removed = set()
+    if not isinstance(delete_names, list):
+        delete_names = []
+    if not isinstance(tags_map, dict):
+        tags_map = {}
+    for name in delete_names:
+        ok, err = delete_track(name)
+        if ok:
+            removed.add(name)
+        else:
+            errors.append("%s: %s" % (name, err or "could not delete"))
+    with LOCK:
+        tags = load_tags()
+        root = os.path.realpath(MUSIC_DIR)
+        for name, genre in tags_map.items():
+            if name in removed:
+                continue
+            full = safe_media_path(name)
+            if not full:
+                errors.append("%s: not found" % name)
+                continue
+            genre = (genre or "").strip()
+            if genre and genre not in GENRES:
+                errors.append("%s: unknown genre" % name)
+                continue
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            if genre:
+                tags[rel] = genre
+            else:
+                tags.pop(rel, None)
+        try:
+            save_tags(tags)
+        except Exception as exc:
+            errors.append(str(exc))
+    return errors
+
+
 def save_uploads(handler):
     length = int(handler.headers.get("Content-Length") or 0)
     if length > MAX_UPLOAD * 8:
@@ -625,6 +664,12 @@ class Handler(SimpleHTTPRequestHandler):
             self._clear_session()
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "/api/library/save":
+            if not self._need_user():
+                return
+            errors = commit_library(data.get("tags"), data.get("delete"))
+            self._json(200, {"ok": not errors, "errors": errors, "tracks": list_tracks()})
             return
         if path == "/api/tag":
             if not self._need_user():

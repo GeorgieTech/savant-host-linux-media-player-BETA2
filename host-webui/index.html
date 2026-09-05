@@ -319,6 +319,7 @@
     .track:hover { border-color: var(--line); background: var(--bg-hover); }
     .track.on { border-color: rgba(226,179,64,0.35); background: var(--gold-dim); }
     .track.editing { grid-template-columns: 36px 1fr minmax(140px, 180px) auto; cursor: default; }
+    .track.pending { opacity: 0.45; }
     .track .n { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
     .track strong { display: block; font-size: 0.95rem; }
     .track em { color: var(--muted); font-style: normal; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -521,6 +522,7 @@
         <div class="lib-actions">
           <button class="btn ghost" id="btn-upload" type="button">Upload tracks</button>
           <button class="btn ghost" id="btn-manage" type="button">Manage</button>
+          <button class="btn primary hidden" id="btn-save" type="button" disabled>Save</button>
         </div>
       </div>
       <p class="lede" id="lib-lede">Audio on this host. Tap a row to play it here.</p>
@@ -577,6 +579,8 @@
       index: -1,
       playing: false,
       manage: false,
+      dirty: false,
+      edit: { genres: {}, remove: {} },
       bins: new Float32Array(48)
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
@@ -652,21 +656,52 @@
       paintNow();
     }
 
+    function beginManage() {
+      state.manage = true;
+      state.dirty = false;
+      state.edit = { genres: {}, remove: {} };
+      state.tracks.forEach((t) => { state.edit.genres[t.name] = t.genre || ""; });
+    }
+
+    function endManage() {
+      state.manage = false;
+      state.dirty = false;
+      state.edit = { genres: {}, remove: {} };
+    }
+
+    function updateSaveButton() {
+      const saveBtn = document.getElementById("btn-save");
+      saveBtn.classList.toggle("hidden", !state.manage);
+      saveBtn.disabled = !state.manage || !state.dirty;
+    }
+
+    function markLibraryDirty(redraw) {
+      state.dirty = true;
+      if (redraw) paintLibrary();
+      else updateSaveButton();
+    }
+
     function paintLibrary() {
       const empty = document.getElementById("lib-empty");
       const list = document.getElementById("track-list");
       const manageBtn = document.getElementById("btn-manage");
+      const saveBtn = document.getElementById("btn-save");
       const lede = document.getElementById("lib-lede");
       empty.classList.toggle("hidden", state.tracks.length > 0);
       manageBtn.classList.toggle("on", state.manage);
+      saveBtn.classList.toggle("hidden", !state.manage);
+      saveBtn.disabled = !state.manage || !state.dirty;
       lede.textContent = state.manage
-        ? "Manage is on. Set a genre or delete a file. Playback is paused on this list."
+        ? (state.dirty
+          ? "Manage is on. Set genres or mark files to delete, then Save."
+          : "Manage is on. Make your changes, then Save.")
         : "Audio on this host. Tap a row to play it here.";
       list.innerHTML = "";
       state.tracks.forEach((track, i) => {
         if (state.manage) {
+          const pending = !!state.edit.remove[track.name];
           const row = document.createElement("div");
-          row.className = "track editing" + (i === state.index ? " on" : "");
+          row.className = "track editing" + (i === state.index ? " on" : "") + (pending ? " pending" : "");
           const num = document.createElement("span");
           num.className = "n";
           num.textContent = String(i + 1).padStart(2, "0");
@@ -679,6 +714,7 @@
           info.appendChild(meta);
           const sel = document.createElement("select");
           sel.setAttribute("aria-label", "Genre");
+          sel.disabled = pending;
           const blank = document.createElement("option");
           blank.value = "";
           blank.textContent = "Genre";
@@ -689,35 +725,25 @@
             opt.textContent = g;
             sel.appendChild(opt);
           });
-          sel.value = track.genre || "";
-          sel.onchange = async () => {
-            try {
-              const data = await api("/api/tag", {
-                method: "POST",
-                body: JSON.stringify({ name: track.name, genre: sel.value })
-              });
-              applyTracks(data.tracks);
-              setLibLog(sel.value ? "Genre set to " + sel.value : "Genre cleared");
-            } catch (e) {
-              setLibLog(e.message || "could not set genre", true);
-            }
+          sel.value = state.edit.genres[track.name] || "";
+          sel.onchange = () => {
+            state.edit.genres[track.name] = sel.value;
+            markLibraryDirty(false);
+            setLibLog("Unsaved changes — tap Save when you are done");
           };
           const del = document.createElement("button");
           del.type = "button";
           del.className = "btn danger";
-          del.textContent = "Delete";
-          del.onclick = async () => {
-            if (!window.confirm("Delete “" + track.title + "” from this host?")) return;
-            try {
-              const data = await api("/api/delete", {
-                method: "POST",
-                body: JSON.stringify({ name: track.name })
-              });
-              applyTracks(data.tracks);
-              setLibLog("Deleted " + track.title);
-            } catch (e) {
-              setLibLog(e.message || "could not delete", true);
+          del.textContent = pending ? "Undo" : "Delete";
+          del.onclick = () => {
+            if (pending) {
+              delete state.edit.remove[track.name];
+              setLibLog("Unsaved changes — tap Save when you are done");
+            } else {
+              state.edit.remove[track.name] = true;
+              setLibLog("Marked for delete — tap Save to apply");
             }
+            markLibraryDirty(true);
           };
           row.appendChild(num);
           row.appendChild(info);
@@ -964,9 +990,44 @@
     });
 
     document.getElementById("btn-manage").onclick = () => {
-      state.manage = !state.manage;
-      setLibLog(state.manage ? "Manage is on" : "");
+      if (state.manage) {
+        if (state.dirty && !window.confirm("Discard unsaved library changes?")) return;
+        endManage();
+        setLibLog("");
+      } else {
+        beginManage();
+        setLibLog("Manage is on. Save when you are finished.");
+      }
       paintLibrary();
+    };
+
+    document.getElementById("btn-save").onclick = async () => {
+      if (!state.manage || !state.dirty) return;
+      const saveBtn = document.getElementById("btn-save");
+      saveBtn.disabled = true;
+      const remove = Object.keys(state.edit.remove || {});
+      try {
+        const data = await api("/api/library/save", {
+          method: "POST",
+          body: JSON.stringify({ tags: state.edit.genres, delete: remove })
+        });
+        applyTracks(data.tracks);
+        if (!data.ok) {
+          beginManage();
+          setLibLog((data.errors || []).join(" · ") || "could not save library", true);
+          paintLibrary();
+          return;
+        }
+        endManage();
+        const bits = [];
+        if (remove.length) bits.push("removed " + remove.length);
+        bits.push("library saved");
+        setLibLog(bits.join(" · "));
+        paintLibrary();
+      } catch (e) {
+        setLibLog(e.message || "could not save library", true);
+        updateSaveButton();
+      }
     };
 
     const fileInput = document.getElementById("file");
