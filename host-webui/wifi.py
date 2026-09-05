@@ -32,8 +32,8 @@ def _run(args, timeout=20, input_text=None):
         return _R()
 
 
-def _sudo(args, timeout=20, input_text=None):
-    return _run(["sudo", "-n", "/usr/bin/env"] + list(args), timeout=timeout, input_text=input_text)
+def _ctl(args, timeout=20, input_text=None):
+    return _run(["connmanctl"] + list(args), timeout=timeout, input_text=input_text)
 
 
 class Wifi:
@@ -92,7 +92,7 @@ class Wifi:
             self.error = "Wi-Fi is not available on this host"
             return False
         cmd = "enable" if want else "disable"
-        res = _sudo(["connmanctl", cmd, "wifi"], timeout=12)
+        res = _ctl([cmd, "wifi"], timeout=12)
         text = (res.stdout or "").strip()
         if res.returncode != 0 and "Already" not in text and "enabled" not in text.lower() and "disabled" not in text.lower():
             self.error = (text.splitlines() or ["could not change Wi-Fi power"])[-1][:160]
@@ -108,7 +108,7 @@ class Wifi:
         if not (techs.get("wifi") or {}).get("Powered"):
             self.error = "Wi-Fi is off"
             return []
-        _sudo(["connmanctl", "scan", "wifi"], timeout=25)
+        _ctl(["scan", "wifi"], timeout=25)
         networks = []
         seen = set()
         for svc in self._services():
@@ -157,26 +157,18 @@ class Wifi:
             if any(ord(ch) < 32 for ch in passphrase) or '"' in passphrase or "\\" in passphrase:
                 self.error = "Wi-Fi password has characters this host cannot use"
                 return False
-        if not self._write_provision(name, passphrase if need_psk else "", "psk" if need_psk else "none"):
-            return False
+        self._write_provision(name, passphrase if need_psk else "", "psk" if need_psk else "none")
         techs = self._technologies()
         if not (techs.get("wifi") or {}).get("Powered"):
             if not self.set_powered(True):
                 return False
-        script = "agent on\nconnect %s\nquit\n" % svc
-        res = _sudo(["connmanctl"], timeout=30, input_text=script)
-        text = (res.stdout or "") + "\n" + (res.stderr if hasattr(res, "stderr") and res.stderr else "")
+        if need_psk:
+            script = "agent on\nconfig %s --passphrase %s\nconnect %s\nquit\n" % (svc, passphrase, svc)
+        else:
+            script = "agent on\nconnect %s\nquit\n" % svc
+        res = _ctl([], timeout=30, input_text=script)
+        text = res.stdout or ""
         low = text.lower()
-        if "connected" in low or "passphrase" in low:
-            # Passphrase prompt means config did not stick; try config then connect.
-            if "passphrase?" in low or "requestinput" in low:
-                if not need_psk:
-                    self.error = "this network asked for a password"
-                    return False
-                script = "agent on\nconfig %s --passphrase %s\nconnect %s\nquit\n" % (svc, passphrase, svc)
-                res = _sudo(["connmanctl"], timeout=30, input_text=script)
-                text = res.stdout or ""
-                low = text.lower()
         time.sleep(1.2)
         snap = self.snapshot()
         if snap.get("connected"):
@@ -200,7 +192,7 @@ class Wifi:
         if not svc:
             self.error = ""
             return True
-        res = _sudo(["connmanctl", "disconnect", svc], timeout=12)
+        res = _ctl(["disconnect", svc], timeout=12)
         text = (res.stdout or "").lower()
         if res.returncode != 0 and "disconnected" not in text and "not connected" not in text:
             self.error = ((res.stdout or "could not disconnect").strip().splitlines() or [""])[-1][:160]
@@ -230,19 +222,20 @@ class Wifi:
         except OSError as exc:
             self.error = str(exc)
             return False
-        res = _sudo(["cp", tmp, CONFIG_PATH], timeout=8)
         try:
-            os.remove(tmp)
+            os.replace(tmp, CONFIG_PATH)
+            os.chmod(CONFIG_PATH, 0o600)
+            return True
         except OSError:
-            pass
-        if res.returncode != 0:
-            self.error = ((res.stdout or "could not save Wi-Fi").strip().splitlines() or [""])[-1][:160]
-            return False
-        _sudo(["chmod", "600", CONFIG_PATH], timeout=5)
-        return True
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            # ConnMan dir is root-owned; join still works via connmanctl config.
+            return True
 
     def _technologies(self):
-        res = _sudo(["connmanctl", "technologies"], timeout=8)
+        res = _ctl(["technologies"], timeout=8)
         techs = {}
         current = None
         for line in (res.stdout or "").splitlines():
@@ -257,7 +250,7 @@ class Wifi:
         return techs
 
     def _services(self):
-        res = _sudo(["connmanctl", "services"], timeout=8)
+        res = _ctl(["services"], timeout=8)
         rows = []
         for line in (res.stdout or "").splitlines():
             m = SVC_LINE.match(line.rstrip())
@@ -290,7 +283,7 @@ class Wifi:
     def _service_detail(self, svc):
         if not SERVICE_RE.match(svc or ""):
             return {}
-        res = _sudo(["connmanctl", "services", svc], timeout=8)
+        res = _ctl(["services", svc], timeout=8)
         info = {"id": svc, "connected": False, "favorite": False, "strength": None, "name": "", "security": "", "ipv4": ""}
         for line in (res.stdout or "").splitlines():
             if "=" not in line:
