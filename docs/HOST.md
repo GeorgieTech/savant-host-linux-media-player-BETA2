@@ -9,7 +9,7 @@ Do **not** use **192.168.1.40**. Do not deploy this tree to **192.168.1.180**.
 | Field | Value |
 |---|---|
 | IP | 192.168.1.178/24 |
-| Hostname | `sav-001aae0733360000` |
+| Hostname | `GWH-001aae0733360000` (factory was `sav-001aae0733360000`) |
 | Device tree model | `SHC-S2-00` |
 | Userspace | 32-bit `armv7l` |
 | Serial (from Beta1 notes) | `QSH180100203` |
@@ -33,3 +33,5 @@ Do **not** use **192.168.1.40**. Do not deploy this tree to **192.168.1.180**.
 - `sudo` NOPASSWD includes `/usr/bin/env` and `/bin/systemctl`
 
 Savant `startupManager` is **masked** for Gigawatt. Default target is `multi-user.target`. nginx is stopped/masked so port 80 is the Python UI.
+
+The factory hostname was `sav-` plus the unit id. It is now `GWH-001aae0733360000` via `hostnamectl` and `/etc/hostname`. Keep Savant masked; the old launcher used to force the `sav-` name at boot.

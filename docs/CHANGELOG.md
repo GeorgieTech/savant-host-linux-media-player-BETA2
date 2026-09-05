@@ -1,5 +1,9 @@
 # Changelog
 
+## After V0.1
+
+- Host renamed to `GWH-001aae0733360000` (`/etc/hostname`, `/etc/hosts`, systemd static hostname). IP stays 192.168.1.178.
+
 ## V0.1 — web app + accounts (192.168.1.178)
 
 - Named **Gigawatt**

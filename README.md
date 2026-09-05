@@ -10,7 +10,7 @@ This project is **not affiliated with Savant Systems**.
 
 ## Current status — V0.1
 
-Target: **192.168.1.178** (`sav-001aae0733360000`)
+Target: **192.168.1.178** (`GWH-001aae0733360000`)
 
 Live UI: [http://192.168.1.178/](http://192.168.1.178/)
 
