@@ -1,5 +1,13 @@
 # Changelog
 
+## V0.14 — library browse, art, lyrics
+
+- Library page: Artists / Albums / Tracks, search, and breadcrumbs like NAS Music
+- Titles, artists, and albums come from file tags, then folders / `Artist - Title` filenames
+- Cover art from embedded pictures or `cover.jpg` / `folder.jpg`; iTunes lookup if missing
+- Live lyrics on Now Playing from `.lrc` / tags, then lrclib.net when the file has none
+- Next/prev follows the album or search list you started from
+
 ## V0.13 — hostname pin and AirPlay restore
 
 - Pin hostname to `GWH-<uid>` after `savant-init` (which resets `sav-<uid>` on every boot)

@@ -758,6 +758,47 @@
       letter-spacing: 0;
       margin-top: 2px;
     }
+    .nas-cover img, .lyrics-art img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: inherit;
+      display: block;
+    }
+    .lyrics {
+      margin-top: 18px;
+      padding: 18px 20px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: var(--bg-elev);
+      max-width: 720px;
+    }
+    .lyrics-art {
+      width: 72px;
+      height: 72px;
+      border-radius: 12px;
+      overflow: hidden;
+      float: right;
+      margin: 0 0 12px 16px;
+      background: var(--bg-hover);
+    }
+    .lyrics-now {
+      color: var(--gold);
+      font-weight: 700;
+      font-size: 1.05rem;
+      line-height: 1.35;
+      min-height: 1.4em;
+    }
+    .lyrics-body {
+      margin-top: 10px;
+      max-height: 220px;
+      overflow: auto;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+    .lyrics-body .on { color: var(--text); font-weight: 700; }
 
     @media (max-width: 820px) {
       #app {
@@ -864,6 +905,11 @@
           <p id="home-sub">Open Library and tap a track</p>
         </div>
       </div>
+      <div class="lyrics hidden" id="lyrics" aria-live="polite">
+        <div class="lyrics-art hidden" id="lyrics-art-wrap"><img id="lyrics-art" alt=""></div>
+        <div class="lyrics-now" id="lyrics-now"></div>
+        <div class="lyrics-body" id="lyrics-body"></div>
+      </div>
     </main>
     <main class="view hidden" id="view-library">
       <div class="lib-head">
@@ -874,8 +920,18 @@
           <button class="btn primary hidden" id="btn-save" type="button" disabled>Save</button>
         </div>
       </div>
-      <p class="lede" id="lib-lede">Audio on this host. Tap a row to play it here.</p>
+      <p class="lede" id="lib-lede">Audio on this host. Browse by artist, album, or track.</p>
+      <div class="nas-toolbar" id="lib-toolbar">
+        <div class="nas-toggle" id="lib-toggle" role="tablist" aria-label="Library view">
+          <button class="btn on" type="button" data-lib-view="artists">Artists</button>
+          <button class="btn" type="button" data-lib-view="albums">Albums</button>
+          <button class="btn" type="button" data-lib-view="tracks">Tracks</button>
+        </div>
+        <input class="nas-search" id="lib-search" type="search" placeholder="Search this view" autocomplete="off" spellcheck="false">
+      </div>
+      <nav class="nas-crumbs" id="lib-crumbs" aria-label="Library folder"></nav>
       <p class="lib-log" id="lib-log"></p>
+      <div id="lib-az" class="nas-az hidden"></div>
       <div class="upload-panel hidden" id="upload-panel" aria-live="polite">
         <div class="res-top">
           <div id="upload-title">Uploading</div>
@@ -890,6 +946,8 @@
         <p>Upload MP3, FLAC, or Opus, or drop files onto this page.</p>
         <div class="formats"><span>MP3</span><span>FLAC</span><span>Opus</span></div>
       </div>
+      <div id="lib-artist-list" class="tracks hidden"></div>
+      <div id="lib-album-list" class="nas-grid hidden"></div>
       <div id="track-list" class="tracks"></div>
     </main>
     <main class="view hidden" id="view-nas">
@@ -926,13 +984,13 @@
     </main>
     <main class="view hidden" id="view-settings">
       <h2>Settings</h2>
-      <p class="lede">This account stays on the host. Nothing is sent to the cloud.</p>
+      <p class="lede">This account stays on the host. Missing lyrics and cover art may be looked up on the public internet when you play a track.</p>
       <div class="settings-list">
         <h3 class="set-h">Account</h3>
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.13</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.14</span></div>
         <form class="row res-row" id="pw-form">
           <div class="detail">
             <div>Password</div>
@@ -1170,7 +1228,13 @@
       nasQuery: "",
       nasLoading: false,
       nasCatalog: { artists: [], albums: [], tracks: [], crumbs: [], path: "", parent: "", error: "", capped: false },
-      nas: { available: false, mounted: false, host: "", share: "", folder: "", username: "", domain: "", password_set: false, error: "", path: "" }
+      nas: { available: false, mounted: false, host: "", share: "", folder: "", username: "", domain: "", password_set: false, error: "", path: "" },
+      libView: "artists",
+      libArtist: "",
+      libAlbum: "",
+      libQuery: "",
+      playList: null,
+      lyrics: { name: "", lines: [], text: "", source: "" }
     };
     let nasGen = 0;
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
@@ -1215,6 +1279,7 @@
         paintEq();
         ensureAudio();
       }
+      if (name === "library") paintLibrary();
       if (name === "nas") {
         paintNasLibrary();
         if (state.nas && state.nas.mounted && !state.nasCatalog.artists.length && !state.nasCatalog.albums.length && !state.nasCatalog.tracks.length && !state.nasLoading) {
@@ -1359,87 +1424,323 @@
       else updateSaveButton();
     }
 
+    function libFilter(items, fields) {
+      const q = (state.libQuery || "").trim().toLowerCase();
+      const list = items || [];
+      if (!q) return list;
+      return list.filter((item) => fields.some((key) => String(item[key] || "").toLowerCase().includes(q)));
+    }
+
+    function libArtists() {
+      const map = {};
+      state.tracks.forEach((track) => {
+        const name = track.artist || "Unknown artist";
+        if (!map[name]) map[name] = { name: name, count: 0 };
+        map[name].count += 1;
+      });
+      return Object.keys(map).sort((a, b) => a.localeCompare(b)).map((k) => map[k]);
+    }
+
+    function libAlbums(artist) {
+      const map = {};
+      state.tracks.forEach((track) => {
+        if (artist && (track.artist || "Unknown artist") !== artist) return;
+        const name = track.album || "Unknown album";
+        const key = (track.artist || "Unknown artist") + "\0" + name;
+        if (!map[key]) map[key] = { name: name, artist: track.artist || "Unknown artist", sample: track, count: 0 };
+        map[key].count += 1;
+      });
+      return Object.keys(map).sort((a, b) => map[a].name.localeCompare(map[b].name)).map((k) => map[k]);
+    }
+
+    function libTracks() {
+      return state.tracks.filter((track) => {
+        if (state.libArtist && (track.artist || "Unknown artist") !== state.libArtist) return false;
+        if (state.libAlbum && (track.album || "Unknown album") !== state.libAlbum) return false;
+        return true;
+      });
+    }
+
+    function artUrl(track, origin) {
+      if (!track || !track.name) return "";
+      return "/api/art?name=" + encodeURIComponent(track.name) + (origin === "nas" ? "&src=nas" : "");
+    }
+
+    function paintCover(el, track, origin) {
+      el.textContent = nasLetter((track && (track.album || track.artist || track.title)) || "?");
+      const img = document.createElement("img");
+      img.alt = "";
+      img.loading = "lazy";
+      img.src = artUrl(track, origin || "local");
+      img.onerror = () => { img.remove(); };
+      el.appendChild(img);
+    }
+
+    function playLibraryTrack(track, queue) {
+      const idx = state.tracks.findIndex((t) => t.name === track.name);
+      if (idx < 0) return;
+      state.playList = (queue && queue.length) ? queue.slice() : libTracks().slice();
+      playIndex(idx, 0, "local");
+    }
+
+    function setLibView(view, opts) {
+      opts = opts || {};
+      if (opts.artist !== undefined) state.libArtist = opts.artist || "";
+      if (opts.album !== undefined) state.libAlbum = opts.album || "";
+      if (view === "artists") {
+        state.libArtist = "";
+        state.libAlbum = "";
+      }
+      if (view === "albums" && !state.libArtist) {
+        /* albums of whole library */
+      }
+      if (view === "tracks" && opts.album) state.libAlbum = opts.album;
+      state.libView = view;
+      if (opts.clearSearch) {
+        state.libQuery = "";
+        const search = document.getElementById("lib-search");
+        if (search) search.value = "";
+      }
+      paintLibrary();
+    }
+
     function paintLibrary() {
       const empty = document.getElementById("lib-empty");
       const list = document.getElementById("track-list");
+      const artistsEl = document.getElementById("lib-artist-list");
+      const albumsEl = document.getElementById("lib-album-list");
+      const az = document.getElementById("lib-az");
       const manageBtn = document.getElementById("btn-manage");
       const saveBtn = document.getElementById("btn-save");
       const lede = document.getElementById("lib-lede");
-      empty.classList.toggle("hidden", state.tracks.length > 0);
+      const toolbar = document.getElementById("lib-toolbar");
+      const view = state.manage ? "tracks" : (state.libView || "artists");
       manageBtn.classList.toggle("on", state.manage);
       saveBtn.classList.toggle("hidden", !state.manage);
       saveBtn.disabled = !state.manage || !state.dirty;
-      lede.textContent = state.manage
-        ? (state.dirty
+      toolbar.classList.toggle("hidden", !!state.manage);
+      document.querySelectorAll("#lib-toggle [data-lib-view]").forEach((btn) => {
+        btn.classList.toggle("on", btn.dataset.libView === view);
+      });
+      if (state.manage) {
+        lede.textContent = state.dirty
           ? "Manage is on. Set genres or mark files to delete, then Save."
-          : "Manage is on. Make your changes, then Save.")
-        : "Audio on this host. Tap a row to play it here.";
+          : "Manage is on. Make your changes, then Save.";
+      } else {
+        lede.textContent = "Audio on this host. Browse by artist, album, or track. Titles come from the file tags when present.";
+      }
+      const artists = libFilter(libArtists(), ["name"]);
+      const albums = libFilter(libAlbums(state.libArtist), ["name", "artist"]);
+      const tracks = libFilter(libTracks(), ["title", "artist", "album", "name", "genre"]);
+      paintLibCrumbs();
+      artistsEl.innerHTML = "";
+      albumsEl.innerHTML = "";
       list.innerHTML = "";
-      state.tracks.forEach((track, i) => {
-        if (state.manage) {
-          const pending = !!state.edit.remove[track.name];
-          const row = document.createElement("div");
-          row.className = "track editing" + (i === state.index ? " on" : "") + (pending ? " pending" : "");
-          const num = document.createElement("span");
-          num.className = "n";
-          num.textContent = String(i + 1).padStart(2, "0");
-          const info = document.createElement("span");
-          const title = document.createElement("strong");
-          title.textContent = track.title;
-          const meta = document.createElement("em");
-          meta.textContent = formatMeta(track);
-          info.appendChild(title);
-          info.appendChild(meta);
-          const sel = document.createElement("select");
-          sel.setAttribute("aria-label", "Genre");
-          sel.disabled = pending;
-          const blank = document.createElement("option");
-          blank.value = "";
-          blank.textContent = "Genre";
-          sel.appendChild(blank);
-          state.genres.forEach((g) => {
-            const opt = document.createElement("option");
-            opt.value = g;
-            opt.textContent = g;
-            sel.appendChild(opt);
-          });
-          sel.value = state.edit.genres[track.name] || "";
-          sel.onchange = () => {
-            state.edit.genres[track.name] = sel.value;
-            markLibraryDirty(false);
-            setLibLog("Unsaved changes — tap Save when you are done");
-          };
-          const del = document.createElement("button");
-          del.type = "button";
-          del.className = "btn danger";
-          del.textContent = pending ? "Undo" : "Delete";
-          del.onclick = () => {
-            if (pending) {
-              delete state.edit.remove[track.name];
-              setLibLog("Unsaved changes — tap Save when you are done");
-            } else {
-              state.edit.remove[track.name] = true;
-              setLibLog("Marked for delete — tap Save to apply");
-            }
-            markLibraryDirty(true);
-          };
-          row.appendChild(num);
-          row.appendChild(info);
-          row.appendChild(sel);
-          row.appendChild(del);
-          list.appendChild(row);
-          return;
+      az.innerHTML = "";
+      artistsEl.classList.toggle("hidden", view !== "artists");
+      albumsEl.classList.toggle("hidden", view !== "albums");
+      list.classList.toggle("hidden", view !== "tracks");
+      let showEmpty = false;
+      let emptyTitle = "No music yet";
+      let emptyCopy = "Upload MP3, FLAC, or Opus, or drop files onto this page.";
+      if (!state.tracks.length) {
+        showEmpty = true;
+      } else if (view === "artists") {
+        showEmpty = artists.length === 0;
+        emptyTitle = state.libQuery ? "No matching artists" : "No artists";
+        emptyCopy = state.libQuery ? "Try a different search." : "Upload tracks or wait for tags to load.";
+        paintLibArtists(artistsEl, az, artists);
+      } else if (view === "albums") {
+        showEmpty = albums.length === 0;
+        emptyTitle = state.libQuery ? "No matching albums" : "No albums here";
+        emptyCopy = state.libQuery ? "Try a different search." : "Open an artist, or switch to Tracks.";
+        paintLibAlbums(albumsEl, albums);
+      } else if (state.manage) {
+        showEmpty = tracks.length === 0;
+        paintLibManage(list, tracks);
+      } else {
+        showEmpty = tracks.length === 0;
+        emptyTitle = state.libQuery ? "No matching tracks" : "No tracks here";
+        emptyCopy = state.libQuery ? "Try a different search." : "Open an album, or search.";
+        paintLibTracks(list, tracks);
+      }
+      az.classList.toggle("hidden", view !== "artists" || artists.length < 18);
+      empty.classList.toggle("hidden", !showEmpty);
+      if (showEmpty) {
+        empty.querySelector("h3").textContent = emptyTitle;
+        empty.querySelector("p").textContent = emptyCopy;
+      }
+    }
+
+    function paintLibCrumbs() {
+      const el = document.getElementById("lib-crumbs");
+      el.innerHTML = "";
+      const crumbs = [{ label: "Library", view: "artists", artist: "", album: "" }];
+      if (state.libArtist) crumbs.push({ label: state.libArtist, view: "albums", artist: state.libArtist, album: "" });
+      if (state.libAlbum) crumbs.push({ label: state.libAlbum, view: "tracks", artist: state.libArtist, album: state.libAlbum });
+      crumbs.forEach((crumb, i) => {
+        if (i) {
+          const sep = document.createElement("span");
+          sep.textContent = "/";
+          el.appendChild(sep);
         }
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "track" + (i === state.index ? " on" : "");
-        btn.innerHTML = "<span class=\"n\">" + String(i + 1).padStart(2, "0") + "</span><span><strong></strong><em></em></span><em></em>";
-        btn.querySelector("strong").textContent = track.title;
-        const ems = btn.querySelectorAll("em");
-        ems[0].textContent = track.genre || "";
-        ems[1].textContent = formatMeta(track);
-        btn.onclick = () => playIndex(i, 0, "local");
+        btn.textContent = crumb.label;
+        btn.className = i === crumbs.length - 1 ? "on" : "";
+        btn.onclick = () => setLibView(crumb.view, { artist: crumb.artist, album: crumb.album, clearSearch: true });
+        el.appendChild(btn);
+      });
+    }
+
+    function paintLibArtists(list, az, artists) {
+      const playing = state.origin === "local" ? currentTrack() : null;
+      const letters = [];
+      let last = "";
+      artists.forEach((artist) => {
+        const letter = nasLetter(artist.name);
+        if (letter !== last) {
+          last = letter;
+          const head = document.createElement("div");
+          head.className = "nas-letter";
+          head.id = "lib-letter-" + letter;
+          head.textContent = letter;
+          list.appendChild(head);
+          letters.push(letter);
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "nas-tile" + (playing && (playing.artist || "Unknown artist") === artist.name ? " on" : "");
+        const mark = document.createElement("span");
+        mark.className = "nas-avatar";
+        mark.textContent = nasLetter(artist.name);
+        const info = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = artist.name;
+        const meta = document.createElement("em");
+        meta.textContent = artist.count + " track" + (artist.count === 1 ? "" : "s");
+        info.appendChild(title);
+        info.appendChild(meta);
+        btn.appendChild(mark);
+        btn.appendChild(info);
+        btn.onclick = () => setLibView("albums", { artist: artist.name, album: "", clearSearch: true });
         list.appendChild(btn);
+      });
+      letters.forEach((letter) => {
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.textContent = letter;
+        jump.onclick = () => {
+          const target = document.getElementById("lib-letter-" + letter);
+          if (target) target.scrollIntoView({ block: "start", behavior: "smooth" });
+        };
+        az.appendChild(jump);
+      });
+    }
+
+    function paintLibAlbums(list, albums) {
+      const playing = state.origin === "local" ? currentTrack() : null;
+      albums.forEach((album) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const on = playing && (playing.album || "Unknown album") === album.name && (playing.artist || "Unknown artist") === album.artist;
+        btn.className = "nas-album" + (on ? " on" : "");
+        const cover = document.createElement("div");
+        cover.className = "nas-cover";
+        paintCover(cover, album.sample, "local");
+        const title = document.createElement("strong");
+        title.textContent = album.name;
+        const meta = document.createElement("em");
+        meta.textContent = album.artist + " · " + album.count;
+        btn.appendChild(cover);
+        btn.appendChild(title);
+        btn.appendChild(meta);
+        btn.onclick = () => setLibView("tracks", { artist: album.artist, album: album.name, clearSearch: true });
+        list.appendChild(btn);
+      });
+    }
+
+    function paintLibTracks(list, tracks) {
+      const playing = state.origin === "local" ? currentTrack() : null;
+      tracks.forEach((track, i) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "track" + (playing && playing.name === track.name ? " on" : "");
+        const num = document.createElement("span");
+        num.className = "n";
+        num.textContent = String(i + 1).padStart(2, "0");
+        const info = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = track.title;
+        const sub = document.createElement("em");
+        sub.className = "sub";
+        sub.textContent = formatNasLine(track) || (track.genre || "");
+        info.appendChild(title);
+        info.appendChild(sub);
+        const ext = document.createElement("em");
+        ext.textContent = formatMeta(track);
+        btn.appendChild(num);
+        btn.appendChild(info);
+        btn.appendChild(ext);
+        btn.onclick = () => playLibraryTrack(track, tracks);
+        list.appendChild(btn);
+      });
+    }
+
+    function paintLibManage(list, tracks) {
+      tracks.forEach((track) => {
+        const i = state.tracks.findIndex((t) => t.name === track.name);
+        const pending = !!state.edit.remove[track.name];
+        const row = document.createElement("div");
+        row.className = "track editing" + (i === state.index ? " on" : "") + (pending ? " pending" : "");
+        const num = document.createElement("span");
+        num.className = "n";
+        num.textContent = String(Math.max(i, 0) + 1).padStart(2, "0");
+        const info = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = track.title;
+        const meta = document.createElement("em");
+        meta.textContent = formatNasLine(track) || formatMeta(track);
+        info.appendChild(title);
+        info.appendChild(meta);
+        const sel = document.createElement("select");
+        sel.setAttribute("aria-label", "Genre");
+        sel.disabled = pending;
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "Genre";
+        sel.appendChild(blank);
+        state.genres.forEach((g) => {
+          const opt = document.createElement("option");
+          opt.value = g;
+          opt.textContent = g;
+          sel.appendChild(opt);
+        });
+        sel.value = state.edit.genres[track.name] || "";
+        sel.onchange = () => {
+          state.edit.genres[track.name] = sel.value;
+          markLibraryDirty(false);
+          setLibLog("Unsaved changes — tap Save when you are done");
+        };
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "btn danger";
+        del.textContent = pending ? "Undo" : "Delete";
+        del.onclick = () => {
+          if (pending) {
+            delete state.edit.remove[track.name];
+            setLibLog("Unsaved changes — tap Save when you are done");
+          } else {
+            state.edit.remove[track.name] = true;
+            setLibLog("Marked for delete — tap Save to apply");
+          }
+          markLibraryDirty(true);
+        };
+        row.appendChild(num);
+        row.appendChild(info);
+        row.appendChild(sel);
+        row.appendChild(del);
+        list.appendChild(row);
       });
     }
 
@@ -1838,7 +2139,7 @@
       const host = state.host || {};
       const opticalLive = state.output === "optical" && (host.playing || host.paused);
       let title = track ? track.title : "Nothing playing";
-      let sub = track ? (state.origin === "nas" ? (formatNasLine(track) || formatMeta(track)) : formatMeta(track)) : routeLabel();
+      let sub = track ? (formatNasLine(track) || formatMeta(track)) : routeLabel();
       let kicker = state.playing ? "Now playing" : (track ? "Paused" : "Standby");
       let homeSub = track ? sub : "Open Library and tap a track";
       if (cast) {
@@ -1869,6 +2170,7 @@
         paintLibrary();
         if (state.nas && state.nas.mounted) paintNasLibrary();
       }
+      tickLyrics();
     }
 
     function fmtGain(n) {
@@ -2047,6 +2349,7 @@
           stopLocalPlayback();
           if (data.host) state.host = data.host;
           paintNow({ skipLib: false });
+          loadLyrics(track, origin);
         } catch (e) {
           setLibLog(e.message || "could not play on TOSLINK", true);
         }
@@ -2061,6 +2364,7 @@
         deck.addEventListener("loadedmetadata", jump);
       }
       paintNow();
+      loadLyrics(track, origin);
     }
 
     async function togglePlay() {
@@ -2088,12 +2392,98 @@
 
     function step(delta) {
       const origin = state.origin || "local";
-      const list = origin === "nas" ? state.nasTracks : state.tracks;
+      const list = origin === "nas"
+        ? state.nasTracks
+        : ((state.playList && state.playList.length) ? state.playList : state.tracks);
       if (!list.length) return;
-      const cur = origin === "nas" ? state.nasIndex : state.index;
-      const n = list.length;
-      const next = (Math.max(0, cur) + delta + n) % n;
-      playIndex(next, 0, origin);
+      const curName = currentTrack() && currentTrack().name;
+      let cur = list.findIndex((t) => t.name === curName);
+      if (cur < 0) cur = 0;
+      const next = (cur + delta + list.length) % list.length;
+      if (origin === "local") playLibraryTrack(list[next], list);
+      else playIndex(next, 0, "nas");
+    }
+
+    function currentPos() {
+      if (state.output === "optical") return (state.host && state.host.position) || 0;
+      try { return deck.currentTime || 0; } catch (_e) { return 0; }
+    }
+
+    function tickLyrics() {
+      const lines = (state.lyrics && state.lyrics.lines) || [];
+      if (!lines.length) return;
+      const pos = currentPos();
+      const nowEl = document.getElementById("lyrics-now");
+      const body = document.getElementById("lyrics-body");
+      let idx = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].t <= pos) idx = i;
+      }
+      if (nowEl) nowEl.textContent = lines[idx].text || "";
+      if (!body) return;
+      const nodes = body.children;
+      if (nodes.length !== lines.length) {
+        body.textContent = "";
+        lines.forEach((line, i) => {
+          const p = document.createElement("div");
+          p.textContent = line.text || " ";
+          if (i === idx) p.className = "on";
+          body.appendChild(p);
+        });
+      } else {
+        for (let i = 0; i < nodes.length; i++) nodes[i].className = i === idx ? "on" : "";
+      }
+      const on = body.querySelector(".on");
+      if (on && nowView === "home") on.scrollIntoView({ block: "nearest" });
+    }
+
+    async function loadLyrics(track, origin) {
+      const box = document.getElementById("lyrics");
+      const nowEl = document.getElementById("lyrics-now");
+      const body = document.getElementById("lyrics-body");
+      const artWrap = document.getElementById("lyrics-art-wrap");
+      const art = document.getElementById("lyrics-art");
+      if (!track || !box) return;
+      const key = (origin || "local") + ":" + track.name;
+      artWrap.classList.remove("hidden");
+      art.onload = () => artWrap.classList.remove("hidden");
+      art.onerror = () => artWrap.classList.add("hidden");
+      art.src = artUrl(track, origin);
+      if (state.lyrics.name === key) {
+        box.classList.remove("hidden");
+        tickLyrics();
+        return;
+      }
+      state.lyrics = { name: key, lines: [], text: "", source: "" };
+      nowEl.textContent = "Looking up lyrics…";
+      body.textContent = "";
+      box.classList.remove("hidden");
+      try {
+        const data = await api("/api/lyrics?name=" + encodeURIComponent(track.name) + (origin === "nas" ? "&src=nas" : ""));
+        if (!currentTrack() || currentTrack().name !== track.name) return;
+        state.lyrics = { name: key, lines: data.lines || [], text: data.text || "", source: data.source || "" };
+        if (state.lyrics.lines.length) {
+          tickLyrics();
+        } else if (state.lyrics.text) {
+          nowEl.textContent = "";
+          body.textContent = state.lyrics.text;
+        } else {
+          nowEl.textContent = "";
+          body.textContent = "No lyrics for this track.";
+        }
+      } catch (_e) {
+        nowEl.textContent = "";
+        body.textContent = "Lyrics unavailable.";
+      }
+    }
+
+    async function refreshLibrary() {
+      try {
+        const data = await api("/api/library");
+        applyTracks(data.tracks || []);
+        paintLibrary();
+        paintNow({ skipLib: true });
+      } catch (_e) {}
     }
 
     deck.addEventListener("play", () => { state.playing = true; paintNow(); });
@@ -2105,6 +2495,7 @@
       document.getElementById("t-now").textContent = fmtTime(pos);
       document.getElementById("t-end").textContent = fmtTime(dur);
       document.getElementById("seek-fill").style.width = (dur ? (pos / dur) * 100 : 0) + "%";
+      tickLyrics();
     });
 
     document.getElementById("btn-play").onclick = togglePlay;
@@ -2236,6 +2627,7 @@
       startAirplayPoll();
       startViz();
       resize();
+      refreshLibrary();
     }
 
     function transportLive() {
@@ -2513,6 +2905,13 @@
     document.getElementById("nas-search").addEventListener("input", (ev) => {
       state.nasQuery = ev.target.value || "";
       paintNasLibrary();
+    });
+    document.querySelectorAll("#lib-toggle [data-lib-view]").forEach((btn) => {
+      btn.onclick = () => setLibView(btn.dataset.libView, { clearSearch: false });
+    });
+    document.getElementById("lib-search").addEventListener("input", (ev) => {
+      state.libQuery = ev.target.value || "";
+      paintLibrary();
     });
 
     document.getElementById("btn-logout").onclick = async () => {

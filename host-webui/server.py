@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.13 — library, NAS browse, browser or TOSLINK EQ, AirPlay, DLNA, Spotify."""
+"""Gigawatt V0.14 — library browse, tags, art, lyrics, NAS, EQ, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -12,10 +12,12 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import OrderedDict
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse, unquote
+from urllib.parse import parse_qs, quote, urlparse, unquote
 
 from airplay import AirPlay, DEFAULT_NAME, sanitize_name
 from dlna import DlnaRenderer
@@ -32,7 +34,21 @@ LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
 PROBE_META_FILE = os.path.join(STATE_DIR, "library-meta.json")
 PROBE_CACHE_MAX = 800
-VERSION = "0.13"
+ART_DIR = os.path.join(STATE_DIR, "art")
+LYRICS_DIR = os.path.join(STATE_DIR, "lyrics")
+VERSION = "0.14"
+COVER_NAMES = (
+    "cover.jpg",
+    "cover.png",
+    "cover.jpeg",
+    "folder.jpg",
+    "folder.png",
+    "albumart.jpg",
+    "AlbumArt.jpg",
+    "front.jpg",
+    "Front.jpg",
+)
+LRC_LINE_RE = re.compile(r"\[(\d{1,2}):(\d{2})(?:[\.:](\d{1,3}))?\](.*)")
 OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 SPOTIFY_DIR = os.environ.get("SPOTIFY_DIR", "/data/opt/spotify")
@@ -93,6 +109,7 @@ _PROBE_LOADED = False
 _PLAYER = None
 _INVENTORY = {"t": 0.0, "ident": None, "mem": None, "disk": None}
 _REBOOTING = False
+_ART_MISS = set()
 AIRPLAY = None
 HOST = None
 DLNA = None
@@ -477,21 +494,35 @@ def save_player(
     return current
 
 
-def load_tags():
+def load_library_file():
     try:
         with open(LIBRARY_FILE, "r") as fh:
             data = json.load(fh)
-        tags = data.get("tags") if isinstance(data, dict) else None
-        return tags if isinstance(tags, dict) else {}
+        if not isinstance(data, dict):
+            data = {}
     except (OSError, ValueError):
-        return {}
+        data = {}
+    tags = data.get("tags") if isinstance(data.get("tags"), dict) else {}
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    return {"tags": tags, "meta": meta}
 
 
-def save_tags(tags):
+def load_tags():
+    return load_library_file()["tags"]
+
+
+def load_meta_overrides():
+    return load_library_file()["meta"]
+
+
+def save_tags(tags, meta=None):
+    current = load_library_file()
+    if meta is None:
+        meta = current["meta"]
     ensure_dirs()
     tmp = LIBRARY_FILE + ".tmp"
     with open(tmp, "w") as fh:
-        json.dump({"tags": tags}, fh, indent=2)
+        json.dump({"tags": tags, "meta": meta}, fh, indent=2)
         fh.write("\n")
     os.replace(tmp, LIBRARY_FILE)
 
@@ -527,6 +558,124 @@ def pretty_title(name):
         prev = base
         base = re.sub(r"^\d{1,3}\s*[-.)]\s*", "", base)
     return re.sub(r"\s+", " ", base).strip() or name
+
+
+def _tag_get(maps, *keys):
+    wanted = [k.lower() for k in keys]
+    for mapping in maps:
+        if not isinstance(mapping, dict):
+            continue
+        for key, value in mapping.items():
+            short = str(key).split(":")[-1].lower()
+            if short in wanted:
+                text = str(value or "").strip()
+                if text:
+                    return text
+    return ""
+
+
+def parse_filename_pair(title):
+    if " - " not in (title or ""):
+        return "", title
+    artist, rest = title.split(" - ", 1)
+    artist = artist.strip()
+    rest = rest.strip()
+    if artist and rest:
+        return artist, rest
+    return "", title
+
+
+def track_identity(rel, info=None, override=None):
+    info = info or {}
+    override = override if isinstance(override, dict) else {}
+    path_artist, path_album, path_title = parse_nas_meta(rel)
+    fn_artist, fn_title = parse_filename_pair(path_title)
+    artist = (override.get("artist") or info.get("artist") or path_artist or fn_artist or "").strip()
+    album = (override.get("album") or info.get("album") or path_album or "").strip()
+    title = (override.get("title") or info.get("title") or "").strip()
+    if not title:
+        title = fn_title if fn_artist else path_title
+    if not title:
+        title = pretty_title(rel)
+    return artist, album, title
+
+
+def folder_cover(full):
+    folder = os.path.dirname(full)
+    for name in COVER_NAMES:
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def sidecar_lyrics(full):
+    base = os.path.splitext(full)[0]
+    for ext in (".lrc", ".LRC", ".txt", ".TXT"):
+        path = base + ext
+        if os.path.isfile(path):
+            try:
+                with open(path, "r") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            if text.strip():
+                return text, "file"
+    return "", ""
+
+
+def parse_lrc(text):
+    lines = []
+    plain = []
+    for raw in (text or "").splitlines():
+        matched = False
+        rest = raw
+        times = []
+        while True:
+            m = LRC_LINE_RE.match(rest)
+            if not m:
+                break
+            matched = True
+            ms = (m.group(3) or "0").ljust(3, "0")[:3]
+            t = int(m.group(1)) * 60 + int(m.group(2)) + int(ms) / 1000.0
+            times.append(t)
+            rest = m.group(4)
+        if matched:
+            line = rest.strip()
+            for t in times:
+                lines.append({"t": t, "text": line})
+            if line:
+                plain.append(line)
+        elif raw.strip() and not raw.strip().startswith("["):
+            plain.append(raw.strip())
+    lines.sort(key=lambda row: row["t"])
+    return lines, "\n".join(plain).strip()
+
+
+def _cache_key(rel, mtime):
+    return hashlib.sha256(("%s|%s" % (rel, int(mtime or 0))).encode("utf-8")).hexdigest()[:20]
+
+
+def http_json(url, timeout=8):
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Gigawatt/%s" % VERSION, "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+        return json.loads(raw.decode("utf-8") or "{}")
+    except Exception:
+        return None
+
+
+def http_bytes(url, timeout=10):
+    req = urllib.request.Request(url, headers={"User-Agent": "Gigawatt/%s" % VERSION})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read(), resp.headers.get("Content-Type") or ""
+    except Exception:
+        return None, ""
 
 
 def _nas_skip(name):
@@ -816,22 +965,31 @@ def probe_audio(full, size, mtime, rel=""):
     key = _probe_key(rel or os.path.basename(full), size, mtime)
     with _PROBE_LOCK:
         cached = PROBE_CACHE.get(key)
-        if cached is not None:
+        if cached is not None and "title" in cached:
             PROBE_CACHE.move_to_end(key)
             return dict(cached)
-    info = {"sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""}
+    info = {
+        "sample_rate": 0,
+        "bit_rate": 0,
+        "hz": "",
+        "bitrate": "",
+        "title": "",
+        "artist": "",
+        "album": "",
+        "genre": "",
+        "has_pic": False,
+        "has_lyrics": False,
+    }
     try:
         raw = subprocess.check_output(
             [
                 "ffprobe",
                 "-v",
                 "error",
-                "-select_streams",
-                "a:0",
                 "-show_entries",
-                "stream=sample_rate,bit_rate",
+                "format=bit_rate:format_tags=title,artist,album,album_artist,genre,lyrics,LYRICS,unsyncedlyrics",
                 "-show_entries",
-                "format=bit_rate",
+                "stream=sample_rate,bit_rate,codec_type:stream_disposition=attached_pic:stream_tags=title,artist,album",
                 "-of",
                 "json",
                 full,
@@ -841,18 +999,32 @@ def probe_audio(full, size, mtime, rel=""):
         )
         data = json.loads(raw.decode("utf-8") or "{}")
         streams = data.get("streams") or []
-        stream = streams[0] if streams else {}
+        audio = {}
         fmt = data.get("format") or {}
+        tags = [fmt.get("tags") or {}]
+        for stream in streams:
+            disp = stream.get("disposition") or {}
+            if disp.get("attached_pic"):
+                info["has_pic"] = True
+            if stream.get("codec_type") == "audio" and not audio:
+                audio = stream
+            if stream.get("tags"):
+                tags.append(stream.get("tags"))
         def _int(value):
             try:
                 return int(value)
             except (TypeError, ValueError):
                 return 0
 
-        info["sample_rate"] = _int(stream.get("sample_rate"))
-        info["bit_rate"] = _int(stream.get("bit_rate")) or _int(fmt.get("bit_rate"))
+        info["sample_rate"] = _int(audio.get("sample_rate"))
+        info["bit_rate"] = _int(audio.get("bit_rate")) or _int(fmt.get("bit_rate"))
         info["hz"] = fmt_hz(info["sample_rate"])
         info["bitrate"] = fmt_bitrate(info["bit_rate"])
+        info["title"] = _tag_get(tags, "title")
+        info["artist"] = _tag_get(tags, "artist", "album_artist", "albumartist")
+        info["album"] = _tag_get(tags, "album")
+        info["genre"] = _tag_get(tags, "genre")
+        info["has_lyrics"] = bool(_tag_get(tags, "lyrics", "unsyncedlyrics"))
     except Exception:
         pass
     global _PROBE_DIRTY
@@ -870,7 +1042,9 @@ def list_tracks(root=None, probe=True, origin="local"):
     tracks = []
     if not os.path.isdir(root):
         return tracks
-    tags = load_tags() if origin == "local" else {}
+    lib = load_library_file() if origin == "local" else {"tags": {}, "meta": {}}
+    tags = lib["tags"]
+    overrides = lib["meta"]
     count = 0
     for dirpath, _dirnames, filenames in os.walk(root):
         for filename in filenames:
@@ -893,8 +1067,23 @@ def list_tracks(root=None, probe=True, origin="local"):
             if probe and size:
                 info = probe_audio(full, size, mtime, rel)
             else:
-                info = {"sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""}
-            artist, album, title = parse_nas_meta(rel) if origin == "nas" else ("", "", pretty_title(rel))
+                info = {
+                    "sample_rate": 0,
+                    "bit_rate": 0,
+                    "hz": "",
+                    "bitrate": "",
+                    "title": "",
+                    "artist": "",
+                    "album": "",
+                    "genre": "",
+                    "has_pic": False,
+                    "has_lyrics": False,
+                }
+            if origin == "nas":
+                artist, album, title = parse_nas_meta(rel)
+            else:
+                artist, album, title = track_identity(rel, info, overrides.get(rel))
+            cover = folder_cover(full)
             tracks.append(
                 {
                     "name": rel,
@@ -903,12 +1092,14 @@ def list_tracks(root=None, probe=True, origin="local"):
                     "album": album,
                     "ext": ext.lstrip("."),
                     "bytes": size,
-                    "sample_rate": info["sample_rate"],
-                    "bit_rate": info["bit_rate"],
-                    "hz": info["hz"],
-                    "bitrate": info["bitrate"],
-                    "genre": tags.get(rel) or "",
+                    "sample_rate": info.get("sample_rate") or 0,
+                    "bit_rate": info.get("bit_rate") or 0,
+                    "hz": info.get("hz") or "",
+                    "bitrate": info.get("bitrate") or "",
+                    "genre": tags.get(rel) or info.get("genre") or "",
                     "origin": origin,
+                    "has_art": bool(info.get("has_pic") or cover),
+                    "has_lyrics": bool(info.get("has_lyrics")),
                 }
             )
             count += 1
@@ -920,6 +1111,207 @@ def list_tracks(root=None, probe=True, origin="local"):
     if probe:
         save_probe_cache()
     return tracks
+
+
+def extract_pic(full, dest):
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        tmp = dest + ".part"
+        subprocess.check_call(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                full,
+                "-an",
+                "-vcodec",
+                "mjpeg",
+                "-frames:v",
+                "1",
+                tmp,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+        if os.path.isfile(tmp) and os.path.getsize(tmp) > 32:
+            os.replace(tmp, dest)
+            return dest
+    except Exception:
+        pass
+    try:
+        os.remove(dest + ".part")
+    except OSError:
+        pass
+    return None
+
+
+def fetch_remote_art(artist, album, title):
+    term = " ".join([p for p in (artist, album or title) if p]).strip()
+    if not term:
+        return None
+    data = http_json(
+        "https://itunes.apple.com/search?term=%s&entity=album&limit=5" % quote(term),
+        timeout=8,
+    )
+    if not data or not isinstance(data.get("results"), list):
+        data = http_json(
+            "https://itunes.apple.com/search?term=%s&entity=song&limit=5" % quote(term),
+            timeout=8,
+        )
+    results = (data or {}).get("results") or []
+    url = ""
+    for row in results:
+        url = row.get("artworkUrl100") or row.get("artworkUrl60") or ""
+        if url:
+            url = url.replace("100x100bb", "600x600bb").replace("60x60bb", "600x600bb")
+            break
+    if not url:
+        return None
+    body, _ctype = http_bytes(url)
+    return body if body and len(body) > 32 else None
+
+
+def resolve_art(name, origin="local"):
+    full = safe_media_path(name, origin)
+    if not full:
+        return None, ""
+    cover = folder_cover(full)
+    if cover:
+        ext = os.path.splitext(cover)[1].lower()
+        mime = "image/png" if ext == ".png" else "image/jpeg"
+        return cover, mime
+    rel = os.path.relpath(full, os.path.realpath(NAS_DIR if origin == "nas" else MUSIC_DIR)).replace("\\", "/")
+    try:
+        mtime = int(os.path.getmtime(full))
+    except OSError:
+        mtime = 0
+    dest = os.path.join(ART_DIR, _cache_key(origin + ":" + rel, mtime) + ".jpg")
+    if os.path.isfile(dest) and os.path.getsize(dest) > 32:
+        return dest, "image/jpeg"
+    if extract_pic(full, dest):
+        return dest, "image/jpeg"
+    miss_key = origin + ":" + rel
+    if miss_key in _ART_MISS:
+        return None, ""
+    artist, album, title = track_identity(rel)
+    if origin == "nas":
+        artist, album, title = parse_nas_meta(rel)
+    blob = fetch_remote_art(artist, album, title)
+    if blob:
+        try:
+            os.makedirs(ART_DIR, exist_ok=True)
+            tmp = dest + ".part"
+            with open(tmp, "wb") as fh:
+                fh.write(blob)
+            os.replace(tmp, dest)
+            return dest, "image/jpeg"
+        except OSError:
+            pass
+    _ART_MISS.add(miss_key)
+    return None, ""
+
+
+def embedded_lyrics(full):
+    try:
+        raw = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format_tags=lyrics,LYRICS,unsyncedlyrics",
+                "-of",
+                "json",
+                full,
+            ],
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+        data = json.loads(raw.decode("utf-8") or "{}")
+        tags = (data.get("format") or {}).get("tags") or {}
+        text = _tag_get([tags], "lyrics", "unsyncedlyrics")
+        return text, "tags" if text else ""
+    except Exception:
+        return "", ""
+
+
+def fetch_remote_lyrics(artist, title, album):
+    if not artist or not title:
+        return "", "", ""
+    q = "artist_name=%s&track_name=%s" % (quote(artist), quote(title))
+    if album:
+        q += "&album_name=%s" % quote(album)
+    data = http_json("https://lrclib.net/api/get?%s" % q, timeout=8)
+    if not data or not isinstance(data, dict):
+        return "", "", ""
+    synced = (data.get("syncedLyrics") or "").strip()
+    plain = (data.get("plainLyrics") or "").strip()
+    return synced, plain, "lrclib"
+
+
+def resolve_lyrics(name, origin="local"):
+    full = safe_media_path(name, origin)
+    if not full:
+        return {"ok": False, "error": "not found", "lines": [], "text": "", "source": ""}
+    rel = os.path.relpath(full, os.path.realpath(NAS_DIR if origin == "nas" else MUSIC_DIR)).replace("\\", "/")
+    try:
+        mtime = int(os.path.getmtime(full))
+    except OSError:
+        mtime = 0
+    cache = os.path.join(LYRICS_DIR, _cache_key(origin + ":" + rel, mtime) + ".json")
+    if os.path.isfile(cache):
+        try:
+            with open(cache, "r") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                return data
+        except (OSError, ValueError):
+            pass
+    text, source = sidecar_lyrics(full)
+    if not text:
+        text, source = embedded_lyrics(full)
+    synced, plain = parse_lrc(text) if text else ([], text)
+    if not text:
+        if origin == "nas":
+            artist, album, title = parse_nas_meta(rel)
+        else:
+            artist, album, title = track_identity(rel, probe_audio(full, os.path.getsize(full), mtime, rel), load_meta_overrides().get(rel))
+        synced_text, plain, source = fetch_remote_lyrics(artist, title, album)
+        if synced_text:
+            lines, parsed_plain = parse_lrc(synced_text)
+            payload = {
+                "ok": True,
+                "lines": lines,
+                "text": parsed_plain or plain,
+                "source": source,
+            }
+        elif plain:
+            payload = {"ok": True, "lines": [], "text": plain, "source": source}
+        else:
+            payload = {"ok": True, "lines": [], "text": "", "source": ""}
+    else:
+        payload = {"ok": True, "lines": synced, "text": plain or text, "source": source}
+    try:
+        os.makedirs(LYRICS_DIR, exist_ok=True)
+        tmp = cache + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, cache)
+    except OSError:
+        pass
+    return payload
+
+
+def send_bytes(handler, body, mime, head=False):
+    body = body or b""
+    handler.send_response(200)
+    handler.send_header("Content-Type", mime)
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "public, max-age=86400")
+    handler.end_headers()
+    if not head:
+        handler.wfile.write(body)
 
 
 def safe_media_path(name, origin="local"):
@@ -1017,13 +1409,15 @@ def delete_track(name):
     except OSError as exc:
         return False, str(exc)
     with LOCK:
-        tags = load_tags()
-        if rel in tags:
-            tags.pop(rel, None)
-            try:
-                save_tags(tags)
-            except Exception:
-                pass
+        lib = load_library_file()
+        tags = lib["tags"]
+        meta = lib["meta"]
+        tags.pop(rel, None)
+        meta.pop(rel, None)
+        try:
+            save_tags(tags, meta)
+        except Exception:
+            pass
     return True, ""
 
 
@@ -1248,6 +1642,33 @@ class Handler(SimpleHTTPRequestHandler):
             if not self._need_user():
                 return
             self._json(200, {"ok": True, "tracks": list_tracks(), "genres": list(GENRES)})
+            return
+        if path == "/api/art":
+            if not self._need_user():
+                return
+            qs = parse_qs(parsed.query)
+            name = (qs.get("name") or [""])[0]
+            origin = (qs.get("src") or qs.get("origin") or ["local"])[0]
+            full, mime = resolve_art(name, "nas" if origin == "nas" else "local")
+            if not full:
+                self.send_error(404)
+                return
+            try:
+                with open(full, "rb") as fh:
+                    body = fh.read()
+            except OSError:
+                self.send_error(404)
+                return
+            send_bytes(self, body, mime or "image/jpeg")
+            return
+        if path == "/api/lyrics":
+            if not self._need_user():
+                return
+            qs = parse_qs(parsed.query)
+            name = (qs.get("name") or [""])[0]
+            origin = (qs.get("src") or qs.get("origin") or ["local"])[0]
+            payload = resolve_lyrics(name, "nas" if origin == "nas" else "local")
+            self._json(200 if payload.get("ok") else 404, payload)
             return
         if path in ("/api/nas/library", "/api/nas/browse"):
             if not self._need_user():
