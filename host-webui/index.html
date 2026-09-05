@@ -401,6 +401,33 @@
       padding: 0 12px;
       font-size: 0.95rem;
     }
+    .res-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .res-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+    }
+    .res-top span { font-variant-numeric: tabular-nums; }
+    .res-bar {
+      height: 8px;
+      border-radius: 99px;
+      background: var(--line);
+      overflow: hidden;
+    }
+    .res-bar i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--gold);
+      transition: width 240ms ease;
+    }
+    .res-bar.low i { background: var(--danger); }
+    .res-copy { color: var(--muted); font-size: 0.82rem; }
     footer.player {
       grid-area: player;
       border-top: 1px solid var(--line);
@@ -671,6 +698,17 @@
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
         <div class="row"><div>App version</div><span>Gigawatt V0.6</span></div>
+        <h3 class="set-h">Internal</h3>
+        <div class="row res-row">
+          <div class="res-top"><div>Memory</div><span id="mem-left">—</span></div>
+          <div class="res-bar" id="mem-bar"><i id="mem-fill"></i></div>
+          <div class="res-copy" id="mem-copy">RAM on this host</div>
+        </div>
+        <div class="row res-row">
+          <div class="res-top"><div>Storage</div><span id="disk-left">—</span></div>
+          <div class="res-bar" id="disk-bar"><i id="disk-fill"></i></div>
+          <div class="res-copy" id="disk-copy">Internal /data partition</div>
+        </div>
         <h3 class="set-h">Playback</h3>
         <div class="row airplay-row">
           <div class="detail">
@@ -840,14 +878,47 @@
       return state.tracks[state.index] || null;
     }
 
+    function fmtBytes(n) {
+      if (n == null || !isFinite(n)) return "—";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let i = 0, x = n;
+      while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+      return x.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+    }
+
+    function paintResource(prefix, info, emptyCopy) {
+      const leftEl = document.getElementById(prefix + "-left");
+      const fillEl = document.getElementById(prefix + "-fill");
+      const barEl = document.getElementById(prefix + "-bar");
+      const copyEl = document.getElementById(prefix + "-copy");
+      if (!info || !info.total) {
+        leftEl.textContent = "—";
+        fillEl.style.width = "0%";
+        copyEl.textContent = emptyCopy;
+        barEl.classList.remove("low");
+        return;
+      }
+      const left = info.free != null ? info.free : Math.max(0, info.total - (info.used || 0));
+      const used = info.used != null ? info.used : Math.max(0, info.total - left);
+      const pct = Math.max(0, Math.min(100, (left / info.total) * 100));
+      leftEl.textContent = fmtBytes(left) + " left";
+      fillEl.style.width = pct + "%";
+      barEl.classList.toggle("low", pct < 15);
+      const where = info.path ? " on " + info.path : "";
+      copyEl.textContent = fmtBytes(left) + " left of " + fmtBytes(info.total) +
+        " · used " + fmtBytes(used) + where;
+    }
+
     function paintUser(status) {
       const name = status.user && status.user.username ? status.user.username : "—";
-      const host = (status.host && status.host.hostname) || "—";
-      const ip = (status.host && status.host.ip) || "—";
+      const host = status.hostname || (status.host && status.host.hostname) || "—";
+      const ip = status.ip || (status.host && status.host.ip) || "—";
       document.getElementById("who").textContent = name;
       document.getElementById("set-user").textContent = name;
       document.getElementById("set-host").textContent = host;
       document.getElementById("set-ip").textContent = ip;
+      paintResource("mem", status.mem, "RAM on this host");
+      paintResource("disk", status.disk, "Internal /data partition");
     }
 
     function formatMeta(track) {
@@ -1047,6 +1118,12 @@
 
     function applyNow(data) {
       if (!data) return;
+      if (data.mem || data.disk) {
+        paintResource("mem", data.mem, "RAM on this host");
+        paintResource("disk", data.disk, "Internal /data partition");
+      }
+      if (data.hostname) document.getElementById("set-host").textContent = data.hostname;
+      if (data.ip) document.getElementById("set-ip").textContent = data.ip;
       if (data.output === "browser" || data.output === "optical") state.output = data.output;
       if (data.host) state.host = data.host;
       if (data.airplay) {

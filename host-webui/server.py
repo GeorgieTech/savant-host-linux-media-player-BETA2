@@ -193,6 +193,33 @@ def host_snapshot():
     return {"hostname": hostname, "ip": ip}
 
 
+def meminfo():
+    data = {}
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                key, rest = line.split(":", 1)
+                data[key] = int(rest.strip().split()[0]) * 1024
+    except Exception:
+        return None
+    total = data.get("MemTotal")
+    avail = data.get("MemAvailable") or data.get("MemFree")
+    if not total:
+        return None
+    free = avail or 0
+    return {"total": total, "used": total - free, "free": free}
+
+
+def disk_usage(path="/data"):
+    try:
+        st = os.statvfs(path)
+        total = st.f_frsize * st.f_blocks
+        free = st.f_frsize * st.f_bavail
+        return {"total": total, "used": total - free, "free": free, "path": path}
+    except Exception:
+        return None
+
+
 def _clamp_int(value, lo, hi, default):
     try:
         n = int(round(float(value)))
@@ -687,7 +714,7 @@ class Handler(SimpleHTTPRequestHandler):
             with LOCK:
                 users = load_users()
                 username = self._current_user()
-            host = host_snapshot()
+            ident = host_snapshot()
             tracks = list_tracks() if username else []
             player = load_player()
             self._json(
@@ -697,10 +724,12 @@ class Handler(SimpleHTTPRequestHandler):
                     "name": "Gigawatt",
                     "setup_required": len(users) == 0,
                     "user": {"username": username} if username else None,
-                    "host": host,
+                    "hostname": ident.get("hostname"),
+                    "ip": ident.get("ip"),
+                    "mem": meminfo(),
+                    "disk": disk_usage("/data"),
                     "formats": ["mp3", "flac", "opus"],
                     "playback": True,
-                    "output": "browser",
                     "tracks": tracks,
                     "genres": list(GENRES),
                     "volume": player["volume"],
@@ -718,6 +747,7 @@ class Handler(SimpleHTTPRequestHandler):
             player = load_player()
             host = HOST.snapshot() if HOST is not None else {}
             snap = airplay_snapshot()
+            ident = host_snapshot()
             self._json(
                 200,
                 {
@@ -726,6 +756,10 @@ class Handler(SimpleHTTPRequestHandler):
                     "volume": player["volume"],
                     "host": host,
                     "airplay": snap,
+                    "hostname": ident.get("hostname"),
+                    "ip": ident.get("ip"),
+                    "mem": meminfo(),
+                    "disk": disk_usage("/data"),
                 },
             )
             return
