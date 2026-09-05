@@ -309,6 +309,16 @@
       font-size: 0.85rem;
     }
     .lib-log.err { color: var(--danger); }
+    .upload-panel {
+      display: grid;
+      gap: 8px;
+      margin: 0 0 16px;
+      padding: 16px 18px;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .upload-panel .res-bar i { transition: width 80ms linear; }
     .tracks { display: grid; gap: 8px; }
     .track {
       display: grid;
@@ -674,6 +684,14 @@
       </div>
       <p class="lede" id="lib-lede">Audio on this host. Tap a row to play it here.</p>
       <p class="lib-log" id="lib-log"></p>
+      <div class="upload-panel hidden" id="upload-panel" aria-live="polite">
+        <div class="res-top">
+          <div id="upload-title">Uploading</div>
+          <span id="upload-pct">0%</span>
+        </div>
+        <div class="res-bar" id="upload-bar"><i id="upload-fill"></i></div>
+        <div class="res-copy" id="upload-copy">Sending to the host</div>
+      </div>
       <input id="file" type="file" accept=".opus,.mp3,.flac,.ogg,.wav,.m4a,.aac,audio/*" multiple hidden>
       <div id="lib-empty" class="empty">
         <h3>No music yet</h3>
@@ -834,7 +852,8 @@
       output: "browser",
       host: { playing: false, paused: false, name: "", position: 0, duration: 0 },
       airplay: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "", name: "Gigawatt" },
-      bins: new Float32Array(48)
+      bins: new Float32Array(48),
+      uploading: false
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
     let eqNodes = [];
@@ -1676,30 +1695,103 @@
     };
 
     const fileInput = document.getElementById("file");
-    document.getElementById("btn-upload").onclick = () => fileInput.click();
+    document.getElementById("btn-upload").onclick = () => {
+      if (state.uploading) return;
+      fileInput.click();
+    };
     fileInput.onchange = () => {
       if (fileInput.files && fileInput.files.length) uploadFiles(fileInput.files);
       fileInput.value = "";
     };
 
+    function setUploading(on) {
+      state.uploading = on;
+      document.getElementById("upload-panel").classList.toggle("hidden", !on);
+      document.getElementById("btn-upload").disabled = on;
+      if (!on) document.getElementById("upload-fill").style.width = "0%";
+    }
+
+    function paintUpload(doneBytes, totalBytes, fileName, index, count, phase) {
+      const pct = totalBytes ? Math.max(0, Math.min(100, (doneBytes / totalBytes) * 100)) : 0;
+      document.getElementById("upload-pct").textContent = Math.round(pct) + "%";
+      document.getElementById("upload-fill").style.width = pct + "%";
+      document.getElementById("upload-title").textContent = phase || "Uploading";
+      const bits = [];
+      if (fileName) bits.push(fileName);
+      if (count > 1) bits.push((index + 1) + " of " + count);
+      bits.push(fmtBytes(doneBytes) + " of " + fmtBytes(totalBytes));
+      document.getElementById("upload-copy").textContent = bits.join(" · ");
+    }
+
+    function uploadOne(file, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/upload");
+        xhr.withCredentials = true;
+        xhr.upload.onprogress = (ev) => {
+          const total = ev.lengthComputable && ev.total ? ev.total : file.size;
+          const ratio = total ? Math.min(1, ev.loaded / total) : 0;
+          onProgress(ratio * file.size, file.size);
+        };
+        xhr.onload = () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText); } catch (_e) {}
+          if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+          else reject(new Error(data.error || xhr.statusText || "upload failed"));
+        };
+        xhr.onerror = () => reject(new Error("upload failed"));
+        xhr.onabort = () => reject(new Error("upload cancelled"));
+        const body = new FormData();
+        body.append("file", file);
+        xhr.send(body);
+      });
+    }
+
     async function uploadFiles(fileList) {
       const files = Array.from(fileList || []);
       if (!files.length) return;
-      const body = new FormData();
-      files.forEach((f) => body.append("file", f));
+      if (state.uploading) {
+        setLibLog("An upload is already in progress.");
+        return;
+      }
+      const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+      let completedBytes = 0;
+      let savedCount = 0;
+      const errors = [];
+      setUploading(true);
+      showView("library");
       setLibLog("Uploading " + files.length + " file" + (files.length === 1 ? "" : "s") + "…");
+      paintUpload(0, totalBytes, files[0].name, 0, files.length, "Uploading");
       try {
-        const res = await fetch("/api/upload", { method: "POST", body, credentials: "same-origin" });
-        let data = {};
-        try { data = await res.json(); } catch (_e) {}
-        if (!res.ok) throw new Error(data.error || res.statusText);
-        applyTracks(data.tracks || []);
-        const n = (data.saved || []).length;
-        const errs = (data.errors || []).join(" · ");
-        setLibLog(n ? ("Added " + n + " track" + (n === 1 ? "" : "s") + (errs ? ". " + errs : "")) : (errs || "nothing saved"), !n);
-        showView("library");
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          paintUpload(completedBytes, totalBytes, file.name, i, files.length, "Uploading");
+          try {
+            const data = await uploadOne(file, (loaded) => {
+              paintUpload(completedBytes + loaded, totalBytes, file.name, i, files.length, "Uploading");
+            });
+            paintUpload(completedBytes + file.size, totalBytes, file.name, i, files.length, "Saving on host");
+            if (data.tracks) applyTracks(data.tracks);
+            savedCount += (data.saved || []).length;
+            (data.errors || []).forEach((err) => errors.push(err));
+          } catch (e) {
+            errors.push(file.name + ": " + (e.message || "failed"));
+          }
+          completedBytes += file.size || 0;
+          paintUpload(completedBytes, totalBytes, file.name, i, files.length, i + 1 < files.length ? "Uploading" : "Done");
+        }
+        const errs = errors.join(" · ");
+        setLibLog(
+          savedCount
+            ? ("Added " + savedCount + " track" + (savedCount === 1 ? "" : "s") + (errs ? ". " + errs : ""))
+            : (errs || "nothing saved"),
+          !savedCount
+        );
       } catch (e) {
         setLibLog(e.message || "upload failed", true);
+      } finally {
+        await new Promise((r) => setTimeout(r, 450));
+        setUploading(false);
       }
     }
 

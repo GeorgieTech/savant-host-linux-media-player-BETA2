@@ -6,6 +6,7 @@
 - Settings: audio out **Browser** or **TOSLINK**, and it actually routes
 - AirPlay still plays TOSLINK; library playback follows the output setting
 - Settings grouped like the rest of the app (Account / Playback / AirPlay)
+- Library: upload progress bar (bytes sent, file name, n of n) while tracks copy to the host
 
 ## V0.5 — AirPlay 1
 
