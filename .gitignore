@@ -13,3 +13,4 @@ state/
 **/users.json
 Music/
 data/music/
+host-webui/nas/rclone

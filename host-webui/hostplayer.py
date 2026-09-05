@@ -47,10 +47,10 @@ class HostPlayer:
                 "source": self.source or "library",
             }
 
-    def play(self, relname, start=0.0):
-        full = os.path.realpath(os.path.join(MUSIC_DIR, relname.replace("\\", "/").lstrip("/")))
-        root = os.path.realpath(MUSIC_DIR)
-        if full != root and not full.startswith(root + os.sep):
+    def play(self, relname, start=0.0, root=None, origin=None):
+        base = os.path.realpath(root or MUSIC_DIR)
+        full = os.path.realpath(os.path.join(base, relname.replace("\\", "/").lstrip("/")))
+        if full != base and not full.startswith(base + os.sep):
             self.error = "not found"
             return False
         if not os.path.isfile(full):
@@ -63,8 +63,8 @@ class HostPlayer:
         if start < 0:
             start = 0.0
         with self.lock:
-            self.source = "library"
-            self.name = os.path.relpath(full, root).replace("\\", "/")
+            self.source = origin or "library"
+            self.name = os.path.relpath(full, base).replace("\\", "/")
             self.duration = self._probe(full)
             if self.duration and start >= max(0.0, self.duration - 0.2):
                 start = 0.0

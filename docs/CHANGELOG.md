@@ -1,5 +1,11 @@
 # Changelog
 
+## V0.8 — NAS SMB music folder
+
+- Settings: connect an SMB share (server, share, folder, user, password)
+- When mounted, a **NAS Music** page lists the share (separate from local Library)
+- Kernel has no CIFS; rclone FUSE mounts at `/data/nas`
+
 ## V0.7 — DLNA renderer + Spotify Connect
 
 - Settings: **DLNA** On/Off and advertise name (BubbleUPnP, VLC, Windows Cast to Device)
