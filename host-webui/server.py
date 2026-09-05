@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.5 — library, browser playback, volume, EQ, AirPlay 1."""
+"""Gigawatt V0.6 — library, browser or TOSLINK, volume, EQ, AirPlay 1."""
 import cgi
 import hashlib
 import json
@@ -16,7 +16,8 @@ from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, unquote
 
-from airplay import AirPlay
+from airplay import AirPlay, DEFAULT_NAME, sanitize_name
+from hostplayer import HostPlayer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("WEBUI_PORT", "80"))
@@ -25,7 +26,8 @@ STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
-VERSION = "0.5"
+VERSION = "0.6"
+OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 EQ_BANDS = 10
 MAX_UPLOAD = 90 * 1024 * 1024
@@ -60,6 +62,7 @@ LOCK = threading.Lock()
 SESSIONS = {}
 PROBE_CACHE = {}
 AIRPLAY = None
+HOST = None
 
 
 def airplay_snapshot():
@@ -73,12 +76,34 @@ def airplay_snapshot():
             "album": "",
             "client": "",
             "error": "",
+            "name": DEFAULT_NAME,
         }
     return AIRPLAY.snapshot()
 
 
 def _on_airplay_begin():
-    return
+    if HOST is not None:
+        HOST.stop()
+
+
+def _optical_ended():
+    if load_player().get("output") != "optical":
+        return
+    if AIRPLAY is not None:
+        snap = AIRPLAY.snapshot()
+        if snap.get("active"):
+            return
+    tracks = list_tracks()
+    names = [t["name"] for t in tracks]
+    if not names or HOST is None:
+        return
+    current = HOST.snapshot().get("name") or ""
+    try:
+        idx = names.index(current)
+    except ValueError:
+        idx = -1
+    nxt = names[(idx + 1) % len(names)]
+    HOST.play(nxt)
 
 
 def _now():
@@ -196,14 +221,20 @@ def load_player():
             data = {}
     except (OSError, ValueError):
         data = {}
+    out = data.get("output")
+    if out not in OUTPUTS:
+        out = "browser"
+    name = sanitize_name(data.get("airplay_name")) or DEFAULT_NAME
     return {
         "volume": _clamp_int(data.get("volume"), 0, 100, 80),
         "eq": _clamp_eq(data.get("eq")),
         "airplay": bool(data.get("airplay")),
+        "airplay_name": name,
+        "output": out,
     }
 
 
-def save_player(volume=None, eq=None, airplay=None):
+def save_player(volume=None, eq=None, airplay=None, airplay_name=None, output=None):
     current = load_player()
     if volume is not None:
         current["volume"] = _clamp_int(volume, 0, 100, current["volume"])
@@ -211,6 +242,12 @@ def save_player(volume=None, eq=None, airplay=None):
         current["eq"] = _clamp_eq(eq)
     if airplay is not None:
         current["airplay"] = bool(airplay)
+    if airplay_name is not None:
+        clean = sanitize_name(airplay_name)
+        if clean:
+            current["airplay_name"] = clean
+    if output is not None and output in OUTPUTS:
+        current["output"] = output
     ensure_dirs()
     tmp = PLAYER_FILE + ".tmp"
     with open(tmp, "w") as fh:
@@ -668,16 +705,29 @@ class Handler(SimpleHTTPRequestHandler):
                     "genres": list(GENRES),
                     "volume": player["volume"],
                     "eq": player["eq"],
+                    "output": player["output"],
+                    "outputs": list(OUTPUTS),
+                    "host": HOST.snapshot() if HOST is not None else {},
                     "airplay": airplay_snapshot(),
                 },
             )
             return
-        if path == "/api/airplay":
+        if path in ("/api/airplay", "/api/now"):
             if not self._need_user():
                 return
+            player = load_player()
+            host = HOST.snapshot() if HOST is not None else {}
             snap = airplay_snapshot()
-            snap["ok"] = True
-            self._json(200, snap)
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "output": player["output"],
+                    "volume": player["volume"],
+                    "host": host,
+                    "airplay": snap,
+                },
+            )
             return
         if path == "/api/library":
             if not self._need_user():
@@ -757,7 +807,61 @@ class Handler(SimpleHTTPRequestHandler):
             if not self._need_user():
                 return
             player = save_player(volume=data.get("volume"))
+            if HOST is not None:
+                HOST.set_volume(player["volume"])
             self._json(200, {"ok": True, "volume": player["volume"]})
+            return
+        if path == "/api/output":
+            if not self._need_user():
+                return
+            value = data.get("output")
+            if value not in OUTPUTS:
+                self._json(400, {"ok": False, "error": "output must be browser or optical"})
+                return
+            if HOST is not None:
+                HOST.stop()
+            player = save_player(output=value)
+            self._json(200, {"ok": True, "output": player["output"]})
+            return
+        if path == "/api/play":
+            if not self._need_user():
+                return
+            if airplay_snapshot().get("active"):
+                self._json(409, {"ok": False, "error": "AirPlay is playing"})
+                return
+            if HOST is None:
+                self._json(409, {"ok": False, "error": "host player missing"})
+                return
+            ok = HOST.play(data.get("name") or "", start=data.get("start") or 0)
+            player = load_player()
+            HOST.set_volume(player["volume"])
+            self._json(200 if ok else 400, {"ok": ok, "host": HOST.snapshot(), "error": HOST.snapshot().get("error")})
+            return
+        if path == "/api/pause":
+            if not self._need_user():
+                return
+            snap = HOST.snapshot() if HOST is not None else {}
+            if snap.get("paused"):
+                ok = HOST.resume()
+            else:
+                ok = HOST.pause() if HOST is not None else False
+            self._json(200 if ok else 400, {"ok": ok, "host": HOST.snapshot() if HOST else {}})
+            return
+        if path == "/api/stop":
+            if not self._need_user():
+                return
+            if HOST is not None:
+                HOST.stop()
+            self._json(200, {"ok": True, "host": HOST.snapshot() if HOST else {}})
+            return
+        if path == "/api/seek":
+            if not self._need_user():
+                return
+            if HOST is None:
+                self._json(409, {"ok": False, "error": "host player missing"})
+                return
+            ok = HOST.seek(data.get("seconds"))
+            self._json(200 if ok else 400, {"ok": ok, "host": HOST.snapshot()})
             return
         if path == "/api/eq":
             if not self._need_user():
@@ -768,18 +872,37 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/airplay":
             if not self._need_user():
                 return
-            want = data.get("enabled")
-            if want is None:
-                want = data.get("airplay")
-            want = bool(want)
-            save_player(airplay=want)
             if AIRPLAY is None:
                 self._json(409, {"ok": False, "error": "AirPlay is not available on this host"})
                 return
-            ok = AIRPLAY.set_enabled(want)
+            if "name" in data and data.get("name") is not None:
+                clean = sanitize_name(data.get("name"))
+                if not clean:
+                    self._json(400, {"ok": False, "error": "name must be 1–50 letters, numbers, space, dot, underscore, or dash"})
+                    return
+                ok = AIRPLAY.set_name(clean)
+                if not ok:
+                    snap = airplay_snapshot()
+                    snap["ok"] = False
+                    self._json(400, snap)
+                    return
+                save_player(airplay_name=clean)
+            if "enabled" in data or "airplay" in data:
+                want = data.get("enabled")
+                if want is None:
+                    want = data.get("airplay")
+                want = bool(want)
+                save_player(airplay=want)
+                if want and HOST is not None:
+                    HOST.stop()
+                ok = AIRPLAY.set_enabled(want)
+                snap = airplay_snapshot()
+                snap["ok"] = ok
+                self._json(200 if ok else 409, snap)
+                return
             snap = airplay_snapshot()
-            snap["ok"] = ok
-            self._json(200 if ok else 409, snap)
+            snap["ok"] = True
+            self._json(200, snap)
             return
         if path == "/api/library/save":
             if not self._need_user():
@@ -882,11 +1005,14 @@ def _validate_account(username, password, confirm):
 
 
 def main():
-    global AIRPLAY
+    global AIRPLAY, HOST
     ensure_dirs()
     os.chdir(ROOT)
-    AIRPLAY = AirPlay(AIRPLAY_DIR, on_begin=_on_airplay_begin)
-    if load_player().get("airplay"):
+    HOST = HostPlayer(on_end=_optical_ended)
+    player = load_player()
+    HOST.set_volume(player["volume"])
+    AIRPLAY = AirPlay(AIRPLAY_DIR, on_begin=_on_airplay_begin, name=player.get("airplay_name"))
+    if player.get("airplay"):
         AIRPLAY.set_enabled(True)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Gigawatt V%s on 0.0.0.0:%s" % (VERSION, PORT), flush=True)

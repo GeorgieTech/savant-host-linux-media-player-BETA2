@@ -9,6 +9,37 @@ import threading
 import time
 
 META_PIPE = "/tmp/gigawatt-airplay.meta"
+NAME_RE = re.compile(r"^[A-Za-z0-9._ -]{1,50}$")
+DEFAULT_NAME = "Gigawatt"
+
+CONF_TEMPLATE = """general = {
+  name = "%s";
+  interpolation = "basic";
+  output_backend = "pa";
+  ignore_volume_control = "no";
+  port = 5000;
+};
+sessioncontrol = {
+  allow_session_interruption = "yes";
+  session_timeout = 120;
+};
+metadata = {
+  enabled = "yes";
+  include_cover_art = "no";
+  pipe_name = "%s";
+  pipe_timeout = 5000;
+};
+pa = {
+  application_name = "Gigawatt AirPlay";
+};
+"""
+
+
+def sanitize_name(name):
+    name = (name or "").strip()
+    if not NAME_RE.match(name):
+        return None
+    return name
 ITEM_RE = re.compile(
     br"<item><type>([0-9a-fA-F]+)</type><code>([0-9a-fA-F]+)</code><length>(\d+)</length>"
     br"(?:\s*<data encoding=\"base64\">(.*?)</data>)?\s*</item>",
@@ -68,7 +99,7 @@ def _pulse_airplay_playing():
 
 
 class AirPlay:
-    def __init__(self, directory, on_begin=None):
+    def __init__(self, directory, on_begin=None, name=None):
         self.directory = directory
         self.on_begin = on_begin
         self.lock = threading.Lock()
@@ -80,7 +111,12 @@ class AirPlay:
         self.album = ""
         self.client = ""
         self.error = ""
+        self.name = sanitize_name(name) or DEFAULT_NAME
         self._meta_fh = None
+        try:
+            self._write_conf()
+        except Exception:
+            pass
 
     def available(self):
         return os.path.isfile(os.path.join(self.directory, "run-shairport"))
@@ -101,12 +137,39 @@ class AirPlay:
                 "available": self.available(),
                 "enabled": bool(self.enabled and running),
                 "active": bool(self.active and running),
+                "name": self.name,
                 "title": title,
                 "artist": self.artist,
                 "album": self.album,
                 "client": self.client,
                 "error": self.error,
             }
+
+    def set_name(self, name):
+        clean = sanitize_name(name)
+        if not clean:
+            self.error = "name must be 1–50 letters, numbers, space, dot, underscore, or dash"
+            return False
+        with self.lock:
+            self.name = clean
+            try:
+                self._write_conf()
+            except Exception as exc:
+                self.error = str(exc)
+                return False
+            self.error = ""
+            if self.enabled:
+                self._stop_locked()
+                return self._start_locked()
+            return True
+
+    def _write_conf(self):
+        path = os.path.join(self.directory, "shairport-sync.conf")
+        body = CONF_TEMPLATE % (self.name.replace("\\", ""), META_PIPE)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write(body)
+        os.replace(tmp, path)
 
     def set_enabled(self, value):
         want = bool(value)

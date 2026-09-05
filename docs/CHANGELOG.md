@@ -1,5 +1,12 @@
 # Changelog
 
+## V0.6 — AirPlay name and TOSLINK routing
+
+- Settings: custom AirPlay name (default Gigawatt)
+- Settings: audio out **Browser** or **TOSLINK**, and it actually routes
+- AirPlay still plays TOSLINK; library playback follows the output setting
+- Settings grouped like the rest of the app (Account / Playback / AirPlay)
+
 ## V0.5 — AirPlay 1
 
 - Settings: AirPlay On/Off. Host advertises as **Gigawatt**

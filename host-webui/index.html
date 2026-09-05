@@ -367,7 +367,16 @@
       padding: 16px;
     }
     .stat b { display: block; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
-    .settings-list { display: grid; gap: 12px; max-width: 520px; }
+    .settings-list { display: grid; gap: 12px; max-width: 560px; }
+    .set-h {
+      margin: 22px 0 4px;
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .set-h:first-child { margin-top: 0; }
     .row {
       display: flex;
       justify-content: space-between;
@@ -379,6 +388,19 @@
       border-radius: 14px;
     }
     .row span { color: var(--muted); font-size: 0.9rem; }
+    .row .detail { max-width: 28rem; }
+    .row .detail p { margin: 6px 0 0; color: var(--muted); font-size: 0.82rem; line-height: 1.4; }
+    .set-field { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .set-field input[type="text"] {
+      height: 40px;
+      width: min(220px, 50vw);
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--bg-input);
+      color: var(--text);
+      padding: 0 12px;
+      font-size: 0.95rem;
+    }
     footer.player {
       grid-area: player;
       border-top: 1px solid var(--line);
@@ -644,20 +666,42 @@
       <h2>Settings</h2>
       <p class="lede">This account stays on the host. Nothing is sent to the cloud.</p>
       <div class="settings-list">
+        <h3 class="set-h">Account</h3>
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.5</span></div>
-        <div class="row"><div>Audio out</div><span>This browser</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.6</span></div>
+        <h3 class="set-h">Playback</h3>
         <div class="row airplay-row">
-          <div>
-            <div>AirPlay</div>
-            <span id="airplay-note">Off. When on, this host appears as Gigawatt on iPhone and Mac. Audio plays the optical jack.</span>
+          <div class="detail">
+            <div>Audio out</div>
+            <p id="output-note">This browser plays in the page. TOSLINK plays the optical jack on the host.</p>
+          </div>
+          <div class="lib-actions" id="output-btns">
+            <button class="btn ghost" id="out-browser" type="button">Browser</button>
+            <button class="btn ghost" id="out-optical" type="button">TOSLINK</button>
+          </div>
+        </div>
+        <h3 class="set-h">AirPlay</h3>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>Receiver</div>
+            <p id="airplay-note">Off. When on, this host appears on iPhone and Mac. Audio plays the optical jack.</p>
           </div>
           <div class="lib-actions" id="airplay-btns">
             <button class="btn ghost" id="airplay-off" type="button">Off</button>
             <button class="btn ghost" id="airplay-on" type="button">On</button>
           </div>
+        </div>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>AirPlay name</div>
+            <p>The name iPhone and Mac show in the AirPlay list.</p>
+          </div>
+          <form class="set-field" id="airplay-name-form">
+            <input id="airplay-name" name="airplay_name" type="text" maxlength="50" autocomplete="off" spellcheck="false">
+            <button class="btn primary" id="airplay-name-save" type="submit">Save</button>
+          </form>
         </div>
       </div>
     </main>
@@ -749,7 +793,9 @@
       volume: 80,
       eq: EQ_BANDS.map(() => 0),
       eqPreset: "flat",
-      airplay: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "" },
+      output: "browser",
+      host: { playing: false, paused: false, name: "", position: 0, duration: 0 },
+      airplay: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "", name: "Gigawatt" },
       bins: new Float32Array(48)
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
@@ -951,6 +997,19 @@
       state.playing = false;
     }
 
+    function routeLabel() {
+      return state.output === "optical" ? "TOSLINK" : "this browser";
+    }
+
+    function paintOutputSettings() {
+      const optical = state.output === "optical";
+      document.getElementById("out-optical").classList.toggle("on", optical);
+      document.getElementById("out-browser").classList.toggle("on", !optical);
+      document.getElementById("output-note").textContent = optical
+        ? "Library playback uses the host TOSLINK jack. EQ in this page does not apply."
+        : "Library playback uses this browser. TOSLINK stays silent unless AirPlay is on.";
+    }
+
     function paintAirplaySettings() {
       const ap = state.airplay || {};
       const onBtn = document.getElementById("airplay-on");
@@ -960,12 +1019,15 @@
       offBtn.classList.toggle("on", !ap.enabled);
       onBtn.disabled = !ap.available;
       offBtn.disabled = !ap.available;
+      const shown = ap.name || "Gigawatt";
+      const nameInput = document.getElementById("airplay-name");
+      if (nameInput && document.activeElement !== nameInput && shown) nameInput.value = shown;
       let note = "AirPlay is not available on this host.";
       if (ap.available) {
         if (ap.error) note = ap.error;
-        else if (ap.active) note = [ap.title || "AirPlay", ap.artist, ap.album].filter(Boolean).join(" · ") + " · optical";
-        else if (ap.enabled) note = "On — looks for Gigawatt on iPhone or Mac. Audio plays the optical jack.";
-        else note = "Off. When on, this host appears as Gigawatt on iPhone and Mac. Audio plays the optical jack.";
+        else if (ap.active) note = [ap.title || "AirPlay", ap.artist, ap.album].filter(Boolean).join(" · ") + " · TOSLINK";
+        else if (ap.enabled) note = "On — looks for “" + shown + "” on iPhone or Mac. Audio plays TOSLINK.";
+        else note = "Off. When on, this host appears as “" + shown + "” on iPhone and Mac. Audio plays TOSLINK.";
       }
       document.getElementById("airplay-note").textContent = note;
       const chip = document.getElementById("mode-chip");
@@ -983,17 +1045,53 @@
       paintNow({ skipLib: true });
     }
 
+    function applyNow(data) {
+      if (!data) return;
+      if (data.output === "browser" || data.output === "optical") state.output = data.output;
+      if (data.host) state.host = data.host;
+      if (data.airplay) {
+        applyAirplay(data.airplay);
+      } else {
+        paintOutputSettings();
+        paintNow({ skipLib: true });
+      }
+      paintOutputSettings();
+      if (state.output === "optical" && !airplayOn()) {
+        const host = state.host || {};
+        if (host.playing || host.paused) {
+          stopLocalPlayback();
+          if (host.name) {
+            const idx = state.tracks.findIndex((t) => t.name === host.name);
+            if (idx >= 0) state.index = idx;
+          }
+          document.getElementById("t-now").textContent = fmtTime(host.position || 0);
+          document.getElementById("t-end").textContent = fmtTime(host.duration || 0);
+          const dur = host.duration || 0;
+          document.getElementById("seek-fill").style.width = (dur ? ((host.position || 0) / dur) * 100 : 0) + "%";
+        }
+        paintNow({ skipLib: true });
+      }
+    }
+
     function paintNow(opts) {
       const ap = state.airplay || {};
       const track = currentTrack();
+      const host = state.host || {};
+      const opticalLive = state.output === "optical" && (host.playing || host.paused);
       let title = track ? track.title : "Nothing playing";
-      let sub = track ? formatMeta(track) : "This browser";
+      let sub = track ? formatMeta(track) : routeLabel();
       let kicker = state.playing ? "Now playing" : (track ? "Paused" : "Standby");
       let homeSub = track ? formatMeta(track) : "Open Library and tap a track";
       if (ap.active) {
         title = ap.title || "AirPlay";
-        sub = [ap.artist, ap.album].filter(Boolean).join(" · ") || "AirPlay · optical";
+        sub = [ap.artist, ap.album].filter(Boolean).join(" · ") || "AirPlay · TOSLINK";
         kicker = "AirPlay";
+        homeSub = sub;
+      } else if (opticalLive) {
+        const ht = state.tracks.find((t) => t.name === host.name);
+        title = ht ? ht.title : (host.name || "TOSLINK");
+        sub = (ht ? formatMeta(ht) : "") + (ht ? " · " : "") + (host.paused ? "paused · TOSLINK" : "TOSLINK");
+        kicker = host.paused ? "Paused" : "Now playing";
         homeSub = sub;
       }
       document.getElementById("now-title").textContent = title;
@@ -1001,7 +1099,8 @@
       document.getElementById("home-title").textContent = title;
       document.getElementById("home-sub").textContent = homeSub;
       document.getElementById("home-kicker").textContent = kicker;
-      document.getElementById("btn-play").textContent = state.playing ? "❚❚" : "▶";
+      const live = ap.active ? false : (state.output === "optical" ? !!host.playing : state.playing);
+      document.getElementById("btn-play").textContent = live ? "❚❚" : "▶";
       document.getElementById("btn-play").disabled = ap.active || !track;
       document.getElementById("btn-prev").disabled = ap.active || state.tracks.length < 2;
       document.getElementById("btn-next").disabled = ap.active || state.tracks.length < 2;
@@ -1156,23 +1255,50 @@
       if (audioCtx.state === "suspended") audioCtx.resume();
     }
 
-    function playIndex(i) {
+    async function playIndex(i, startAt) {
       if (airplayOn()) return;
       const track = state.tracks[i];
       if (!track) return;
       state.index = i;
+      if (state.output === "optical") {
+        try {
+          const data = await api("/api/play", {
+            method: "POST",
+            body: JSON.stringify({ name: track.name, start: startAt || 0 })
+          });
+          stopLocalPlayback();
+          if (data.host) state.host = data.host;
+          paintNow({ skipLib: false });
+          showView("home");
+        } catch (e) {
+          setLibLog(e.message || "could not play on TOSLINK", true);
+        }
+        return;
+      }
       deck.src = "/api/media?name=" + encodeURIComponent(track.name);
       ensureAudio();
       const start = deck.play();
       if (start && start.catch) start.catch(() => { state.playing = false; paintNow(); });
+      if (startAt) {
+        const jump = () => { try { deck.currentTime = startAt; } catch (_e) {} deck.removeEventListener("loadedmetadata", jump); };
+        deck.addEventListener("loadedmetadata", jump);
+      }
       paintNow();
       showView("home");
     }
 
-    function togglePlay() {
+    async function togglePlay() {
       if (airplayOn()) return;
       if (!currentTrack()) {
         if (state.tracks[0]) playIndex(0);
+        return;
+      }
+      if (state.output === "optical") {
+        try {
+          const data = await api("/api/pause", { method: "POST", body: "{}" });
+          if (data.host) state.host = data.host;
+          paintNow({ skipLib: true });
+        } catch (_e) {}
         return;
       }
       ensureAudio();
@@ -1205,11 +1331,22 @@
     document.getElementById("btn-play").onclick = togglePlay;
     document.getElementById("btn-prev").onclick = () => step(-1);
     document.getElementById("btn-next").onclick = () => step(1);
-    document.getElementById("seek").onclick = (ev) => {
+    document.getElementById("seek").onclick = async (ev) => {
+      const rect = ev.currentTarget.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      if (state.output === "optical") {
+        const dur = (state.host && state.host.duration) || 0;
+        if (!dur) return;
+        try {
+          const data = await api("/api/seek", { method: "POST", body: JSON.stringify({ seconds: ratio * dur }) });
+          if (data.host) state.host = data.host;
+          paintNow({ skipLib: true });
+        } catch (_e) {}
+        return;
+      }
       const dur = deck.duration;
       if (!dur || !isFinite(dur)) return;
-      const rect = ev.currentTarget.getBoundingClientRect();
-      deck.currentTime = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width)) * dur;
+      deck.currentTime = ratio * dur;
     };
     document.getElementById("vol").oninput = (ev) => applyVolume(ev.target.value, true);
     document.getElementById("vol").onchange = (ev) => applyVolume(ev.target.value, true);
@@ -1229,7 +1366,7 @@
       const h = canvas.clientHeight || 1;
       if (canvas.width === 0) resize();
       let energy = 0.06;
-      if (airplayOn() && !state.playing) {
+      if ((airplayOn() || (state.output === "optical" && state.host && state.host.playing)) && !state.playing) {
         energy = 0.22 + 0.12 * (0.5 + 0.5 * Math.sin(ts / 280));
       }
       if (analyser && state.playing) {
@@ -1245,7 +1382,7 @@
         if (freq && state.playing) {
           const idx = Math.min(freq.length - 1, Math.floor(Math.pow(i / n, 1.4) * freq.length));
           target = freq[idx] / 255;
-        } else if (airplayOn()) {
+        } else if (airplayOn() || (state.output === "optical" && state.host && state.host.playing)) {
           target = energy * (0.35 + 0.65 * Math.abs(Math.sin(ts / 220 + i * 0.33)));
         }
         state.bins[i] += (target - state.bins[i]) * 0.28;
@@ -1272,7 +1409,7 @@
       }
       ctx.beginPath();
       ctx.arc(cx, cy, 18 + energy * 26, 0, Math.PI * 2);
-      ctx.fillStyle = (state.playing || airplayOn()) ? "rgba(226,179,64," + (0.12 + energy * 0.18) + ")" : "rgba(255,255,255,0.04)";
+      ctx.fillStyle = (state.playing || airplayOn() || (state.host && state.host.playing)) ? "rgba(226,179,64," + (0.12 + energy * 0.18) + ")" : "rgba(255,255,255,0.04)";
       ctx.fill();
       requestAnimationFrame(tick);
     }
@@ -1286,7 +1423,10 @@
       applyEqGains(status.eq || EQ_BANDS.map(() => 0), false);
       paintEq();
       applyTracks(status.tracks || []);
+      if (status.output) state.output = status.output;
+      if (status.host) state.host = status.host;
       applyAirplay(status.airplay || {});
+      paintOutputSettings();
       startAirplayPoll();
       resize();
     }
@@ -1294,7 +1434,7 @@
     function startAirplayPoll() {
       stopAirplayPoll();
       airplayTimer = setInterval(async () => {
-        try { applyAirplay(await api("/api/airplay")); } catch (_e) {}
+        try { applyNow(await api("/api/now")); } catch (_e) {}
       }, 1000);
     }
 
@@ -1364,6 +1504,39 @@
         btn.disabled = false;
       }
     });
+
+    async function setOutput(mode) {
+      const idx = state.index;
+      const browserPos = deck.currentTime || 0;
+      const hostPos = (state.host && state.host.position) || 0;
+      const wasPlaying = state.playing || !!(state.host && state.host.playing);
+      try {
+        await api("/api/output", { method: "POST", body: JSON.stringify({ output: mode }) });
+      } catch (e) {
+        document.getElementById("output-note").textContent = e.message || "could not change output";
+        return;
+      }
+      state.output = mode;
+      state.host = { playing: false, paused: false, name: "", position: 0, duration: 0 };
+      paintOutputSettings();
+      if (!wasPlaying || idx < 0 || !state.tracks[idx]) {
+        paintNow({ skipLib: true });
+        return;
+      }
+      const pos = mode === "optical" ? browserPos : hostPos;
+      playIndex(idx, pos);
+    }
+    document.getElementById("out-browser").onclick = () => setOutput("browser");
+    document.getElementById("out-optical").onclick = () => setOutput("optical");
+    document.getElementById("airplay-name-form").onsubmit = async (ev) => {
+      ev.preventDefault();
+      const name = document.getElementById("airplay-name").value.trim();
+      try {
+        applyAirplay(await api("/api/airplay", { method: "POST", body: JSON.stringify({ name }) }));
+      } catch (e) {
+        document.getElementById("airplay-note").textContent = e.message || "could not save AirPlay name";
+      }
+    };
 
     document.getElementById("airplay-on").onclick = async () => {
       try { applyAirplay(await api("/api/airplay", { method: "POST", body: JSON.stringify({ enabled: true }) })); }
