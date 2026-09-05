@@ -1,5 +1,11 @@
 # Changelog
 
+## V0.7 — DLNA renderer + Spotify Connect
+
+- Settings: **DLNA** On/Off and advertise name (BubbleUPnP, VLC, Windows Cast to Device)
+- Settings: **Spotify Connect** On/Off and advertise name (`go-librespot`, Premium, internet)
+- Both play TOSLINK, show now-playing on Home, and take over from the library like AirPlay
+
 ## V0.6 — AirPlay name and TOSLINK routing
 
 - Settings: custom AirPlay name (default Gigawatt)

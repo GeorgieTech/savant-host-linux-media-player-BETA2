@@ -31,6 +31,7 @@ class HostPlayer:
         self.duration = 0.0
         self.error = ""
         self.generation = 0
+        self.source = "library"
         threading.Thread(target=self._watch, daemon=True).start()
 
     def snapshot(self):
@@ -43,6 +44,7 @@ class HostPlayer:
                 "position": self._position_locked(),
                 "duration": round(self.duration or 0.0, 2),
                 "error": self.error,
+                "source": self.source or "library",
             }
 
     def play(self, relname, start=0.0):
@@ -61,11 +63,33 @@ class HostPlayer:
         if start < 0:
             start = 0.0
         with self.lock:
+            self.source = "library"
             self.name = os.path.relpath(full, root).replace("\\", "/")
             self.duration = self._probe(full)
             if self.duration and start >= max(0.0, self.duration - 0.2):
                 start = 0.0
             return self._play_locked(full, start)
+
+    def play_url(self, url, start=0.0, title="", duration=0.0):
+        url = (url or "").strip()
+        if not url.startswith("http://") and not url.startswith("https://"):
+            self.error = "bad url"
+            return False
+        try:
+            start = float(start or 0.0)
+        except (TypeError, ValueError):
+            start = 0.0
+        if start < 0:
+            start = 0.0
+        try:
+            duration = float(duration or 0.0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        with self.lock:
+            self.source = "url"
+            self.name = title or url
+            self.duration = duration
+            return self._play_locked(url, start)
 
     def pause(self):
         with self.lock:
@@ -106,6 +130,7 @@ class HostPlayer:
             self._stop_locked()
             self.name = ""
             self.duration = 0.0
+            self.source = "library"
             self.error = ""
             return True
 

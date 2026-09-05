@@ -181,6 +181,14 @@ class AirPlay:
             self.error = ""
             return True
 
+    def bounce(self):
+        """Drop an in-progress AirPlay session but keep advertising if enabled."""
+        with self.lock:
+            if not self.enabled:
+                return True
+            self._stop_locked()
+            return self._start_locked()
+
     def _ensure_fifo(self):
         path = META_PIPE
         if os.path.exists(path) and not stat.S_ISFIFO(os.stat(path).st_mode):

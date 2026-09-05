@@ -1,0 +1,6 @@
+#!/bin/sh
+DIR=$(cd "$(dirname "$0")" && pwd)
+export PULSE_SERVER="${PULSE_SERVER:-unix:/var/run/pulse/native}"
+CONF="${SPOTIFY_STATE:-/data/gigawatt/spotify}"
+mkdir -p "$CONF"
+exec "$DIR/go-librespot" -config_dir "$CONF" "$@"

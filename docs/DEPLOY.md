@@ -18,7 +18,7 @@ Savant images on the eMMC are not deleted.
 From the repo root:
 
 ```sh
-scp -O host-webui/index.html host-webui/server.py RPM@192.168.1.178:/tmp/
+scp -O host-webui/index.html host-webui/server.py host-webui/dlna.py host-webui/spotify.py RPM@192.168.1.178:/tmp/
 ssh RPM@192.168.1.178
 sudo -n /usr/bin/env bash -c '
   cp /tmp/index.html /tmp/server.py /data/www/

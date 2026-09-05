@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.6 — library, browser or TOSLINK, volume, EQ, AirPlay 1."""
+"""Gigawatt V0.7 — library, browser or TOSLINK, volume, EQ, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -17,7 +17,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, unquote
 
 from airplay import AirPlay, DEFAULT_NAME, sanitize_name
+from dlna import DlnaRenderer
 from hostplayer import HostPlayer
+from spotify import Spotify
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("WEBUI_PORT", "80"))
@@ -26,9 +28,10 @@ STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
-VERSION = "0.6"
+VERSION = "0.7"
 OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
+SPOTIFY_DIR = os.environ.get("SPOTIFY_DIR", "/data/opt/spotify")
 EQ_BANDS = 10
 MAX_UPLOAD = 90 * 1024 * 1024
 COOKIE = "gigawatt_session"
@@ -63,36 +66,72 @@ SESSIONS = {}
 PROBE_CACHE = {}
 AIRPLAY = None
 HOST = None
+DLNA = None
+SPOTIFY = None
+
+
+def _empty_source(name=DEFAULT_NAME):
+    return {
+        "available": False,
+        "enabled": False,
+        "active": False,
+        "title": "",
+        "artist": "",
+        "album": "",
+        "client": "",
+        "error": "",
+        "name": name,
+    }
 
 
 def airplay_snapshot():
-    if AIRPLAY is None:
-        return {
-            "available": False,
-            "enabled": False,
-            "active": False,
-            "title": "",
-            "artist": "",
-            "album": "",
-            "client": "",
-            "error": "",
-            "name": DEFAULT_NAME,
-        }
-    return AIRPLAY.snapshot()
+    return AIRPLAY.snapshot() if AIRPLAY is not None else _empty_source()
+
+
+def dlna_snapshot():
+    return DLNA.snapshot() if DLNA is not None else _empty_source()
+
+
+def spotify_snapshot():
+    return SPOTIFY.snapshot() if SPOTIFY is not None else _empty_source()
 
 
 def _on_airplay_begin():
     if HOST is not None:
         HOST.stop()
+    if DLNA is not None:
+        DLNA.stop_playback()
+    if SPOTIFY is not None:
+        SPOTIFY.stop_playback()
+
+
+def _on_dlna_begin():
+    if AIRPLAY is not None:
+        AIRPLAY.bounce()
+    if SPOTIFY is not None:
+        SPOTIFY.stop_playback()
+
+
+def _on_spotify_begin():
+    if HOST is not None:
+        HOST.stop()
+    if DLNA is not None:
+        DLNA.stop_playback()
+    if AIRPLAY is not None:
+        AIRPLAY.bounce()
 
 
 def _optical_ended():
+    if HOST is not None:
+        snap = HOST.snapshot()
+        if snap.get("source") == "url":
+            if DLNA is not None:
+                DLNA.on_stream_ended()
+            return
     if load_player().get("output") != "optical":
         return
-    if AIRPLAY is not None:
-        snap = AIRPLAY.snapshot()
-        if snap.get("active"):
-            return
+    if airplay_snapshot().get("active") or spotify_snapshot().get("active"):
+        return
     tracks = list_tracks()
     names = [t["name"] for t in tracks]
     if not names or HOST is None:
@@ -252,16 +291,32 @@ def load_player():
     if out not in OUTPUTS:
         out = "browser"
     name = sanitize_name(data.get("airplay_name")) or DEFAULT_NAME
+    dlna_name = sanitize_name(data.get("dlna_name")) or DEFAULT_NAME
+    spotify_name = sanitize_name(data.get("spotify_name")) or DEFAULT_NAME
     return {
         "volume": _clamp_int(data.get("volume"), 0, 100, 80),
         "eq": _clamp_eq(data.get("eq")),
         "airplay": bool(data.get("airplay")),
         "airplay_name": name,
+        "dlna": bool(data.get("dlna")),
+        "dlna_name": dlna_name,
+        "spotify": bool(data.get("spotify")),
+        "spotify_name": spotify_name,
         "output": out,
     }
 
 
-def save_player(volume=None, eq=None, airplay=None, airplay_name=None, output=None):
+def save_player(
+    volume=None,
+    eq=None,
+    airplay=None,
+    airplay_name=None,
+    dlna=None,
+    dlna_name=None,
+    spotify=None,
+    spotify_name=None,
+    output=None,
+):
     current = load_player()
     if volume is not None:
         current["volume"] = _clamp_int(volume, 0, 100, current["volume"])
@@ -273,6 +328,18 @@ def save_player(volume=None, eq=None, airplay=None, airplay_name=None, output=No
         clean = sanitize_name(airplay_name)
         if clean:
             current["airplay_name"] = clean
+    if dlna is not None:
+        current["dlna"] = bool(dlna)
+    if dlna_name is not None:
+        clean = sanitize_name(dlna_name)
+        if clean:
+            current["dlna_name"] = clean
+    if spotify is not None:
+        current["spotify"] = bool(spotify)
+    if spotify_name is not None:
+        clean = sanitize_name(spotify_name)
+        if clean:
+            current["spotify_name"] = clean
     if output is not None and output in OUTPUTS:
         current["output"] = output
     ensure_dirs()
@@ -738,15 +805,16 @@ class Handler(SimpleHTTPRequestHandler):
                     "outputs": list(OUTPUTS),
                     "host": HOST.snapshot() if HOST is not None else {},
                     "airplay": airplay_snapshot(),
+                    "dlna": dlna_snapshot(),
+                    "spotify": spotify_snapshot(),
                 },
             )
             return
-        if path in ("/api/airplay", "/api/now"):
+        if path in ("/api/airplay", "/api/now", "/api/dlna", "/api/spotify"):
             if not self._need_user():
                 return
             player = load_player()
             host = HOST.snapshot() if HOST is not None else {}
-            snap = airplay_snapshot()
             ident = host_snapshot()
             self._json(
                 200,
@@ -755,7 +823,9 @@ class Handler(SimpleHTTPRequestHandler):
                     "output": player["output"],
                     "volume": player["volume"],
                     "host": host,
-                    "airplay": snap,
+                    "airplay": airplay_snapshot(),
+                    "dlna": dlna_snapshot(),
+                    "spotify": spotify_snapshot(),
                     "hostname": ident.get("hostname"),
                     "ip": ident.get("ip"),
                     "mem": meminfo(),
@@ -863,6 +933,10 @@ class Handler(SimpleHTTPRequestHandler):
             if airplay_snapshot().get("active"):
                 self._json(409, {"ok": False, "error": "AirPlay is playing"})
                 return
+            if spotify_snapshot().get("active"):
+                SPOTIFY.stop_playback()
+            if DLNA is not None:
+                DLNA.stop_playback()
             if HOST is None:
                 self._json(409, {"ok": False, "error": "host player missing"})
                 return
@@ -935,6 +1009,74 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(200 if ok else 409, snap)
                 return
             snap = airplay_snapshot()
+            snap["ok"] = True
+            self._json(200, snap)
+            return
+        if path == "/api/dlna":
+            if not self._need_user():
+                return
+            if DLNA is None:
+                self._json(409, {"ok": False, "error": "DLNA is not available on this host"})
+                return
+            if "name" in data and data.get("name") is not None:
+                clean = sanitize_name(data.get("name"))
+                if not clean:
+                    self._json(400, {"ok": False, "error": "name must be 1–50 letters, numbers, space, dot, underscore, or dash"})
+                    return
+                ok = DLNA.set_name(clean)
+                if not ok:
+                    snap = dlna_snapshot()
+                    snap["ok"] = False
+                    self._json(400, snap)
+                    return
+                save_player(dlna_name=clean)
+            if "enabled" in data or "dlna" in data:
+                want = data.get("enabled")
+                if want is None:
+                    want = data.get("dlna")
+                want = bool(want)
+                save_player(dlna=want)
+                ok = DLNA.set_enabled(want)
+                snap = dlna_snapshot()
+                snap["ok"] = ok
+                self._json(200 if ok else 409, snap)
+                return
+            snap = dlna_snapshot()
+            snap["ok"] = True
+            self._json(200, snap)
+            return
+        if path == "/api/spotify":
+            if not self._need_user():
+                return
+            if SPOTIFY is None:
+                self._json(409, {"ok": False, "error": "Spotify Connect is not available on this host"})
+                return
+            if "name" in data and data.get("name") is not None:
+                clean = sanitize_name(data.get("name"))
+                if not clean:
+                    self._json(400, {"ok": False, "error": "name must be 1–50 letters, numbers, space, dot, underscore, or dash"})
+                    return
+                ok = SPOTIFY.set_name(clean)
+                if not ok:
+                    snap = spotify_snapshot()
+                    snap["ok"] = False
+                    self._json(400, snap)
+                    return
+                save_player(spotify_name=clean)
+            if "enabled" in data or "spotify" in data:
+                want = data.get("enabled")
+                if want is None:
+                    want = data.get("spotify")
+                want = bool(want)
+                save_player(spotify=want)
+                if want and HOST is not None:
+                    HOST.stop()
+                ok = SPOTIFY.set_enabled(want)
+                snap = spotify_snapshot()
+                snap["ok"] = ok
+                self._json(200 if ok else 409, snap)
+                return
+            snap = spotify_snapshot()
             snap["ok"] = True
             self._json(200, snap)
             return
@@ -1039,7 +1181,7 @@ def _validate_account(username, password, confirm):
 
 
 def main():
-    global AIRPLAY, HOST
+    global AIRPLAY, HOST, DLNA, SPOTIFY
     ensure_dirs()
     os.chdir(ROOT)
     HOST = HostPlayer(on_end=_optical_ended)
@@ -1048,6 +1190,23 @@ def main():
     AIRPLAY = AirPlay(AIRPLAY_DIR, on_begin=_on_airplay_begin, name=player.get("airplay_name"))
     if player.get("airplay"):
         AIRPLAY.set_enabled(True)
+    DLNA = DlnaRenderer(
+        HOST,
+        on_begin=_on_dlna_begin,
+        name=player.get("dlna_name"),
+        volume_getter=lambda: load_player()["volume"],
+        uuid_path=os.path.join(STATE_DIR, "dlna-uuid"),
+    )
+    if player.get("dlna"):
+        DLNA.set_enabled(True)
+    SPOTIFY = Spotify(
+        SPOTIFY_DIR,
+        STATE_DIR,
+        on_begin=_on_spotify_begin,
+        name=player.get("spotify_name"),
+    )
+    if player.get("spotify"):
+        SPOTIFY.set_enabled(True)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Gigawatt V%s on 0.0.0.0:%s" % (VERSION, PORT), flush=True)
     try:

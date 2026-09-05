@@ -1,4 +1,4 @@
-# host-webui (Gigawatt V0.6)
+# host-webui (Gigawatt V0.7)
 
 Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 
@@ -17,6 +17,8 @@ Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 - `POST /api/play` `{name, start?}` / `/api/pause` / `/api/stop` / `/api/seek` — TOSLINK transport
 - `GET /api/airplay` — same payload as `/api/now`
 - `POST /api/airplay` — `{enabled}` and/or `{name}`
+- `GET/POST /api/dlna` — `{enabled}` and/or `{name}` (UPnP MediaRenderer on UDP 1900 + TCP 49494)
+- `GET/POST /api/spotify` — `{enabled}` and/or `{name}` (Spotify Connect, Premium)
 - `POST /api/library/save` — `{tags: {name: genre}, delete: [name]}` after Manage
 - `POST /api/tag` — `{name, genre}` (empty genre clears)
 - `POST /api/delete` — `{name}`

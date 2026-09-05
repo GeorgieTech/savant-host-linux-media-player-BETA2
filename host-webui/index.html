@@ -715,7 +715,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.6</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.7</span></div>
         <h3 class="set-h">Internal</h3>
         <div class="row res-row">
           <div class="res-top"><div>Memory</div><span id="mem-left">—</span></div>
@@ -757,6 +757,48 @@
           <form class="set-field" id="airplay-name-form">
             <input id="airplay-name" name="airplay_name" type="text" maxlength="50" autocomplete="off" spellcheck="false">
             <button class="btn primary" id="airplay-name-save" type="submit">Save</button>
+          </form>
+        </div>
+        <h3 class="set-h">DLNA</h3>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>Renderer</div>
+            <p id="dlna-note">Off. When on, this host appears in BubbleUPnP, VLC, and other DLNA apps. Audio plays TOSLINK.</p>
+          </div>
+          <div class="lib-actions" id="dlna-btns">
+            <button class="btn ghost" id="dlna-off" type="button">Off</button>
+            <button class="btn ghost" id="dlna-on" type="button">On</button>
+          </div>
+        </div>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>DLNA name</div>
+            <p>The name Android and DLNA apps show in the renderer list.</p>
+          </div>
+          <form class="set-field" id="dlna-name-form">
+            <input id="dlna-name" name="dlna_name" type="text" maxlength="50" autocomplete="off" spellcheck="false">
+            <button class="btn primary" id="dlna-name-save" type="submit">Save</button>
+          </form>
+        </div>
+        <h3 class="set-h">Spotify Connect</h3>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>Receiver</div>
+            <p id="spotify-note">Off. When on, this host appears in the Spotify app. Premium required. Audio plays TOSLINK.</p>
+          </div>
+          <div class="lib-actions" id="spotify-btns">
+            <button class="btn ghost" id="spotify-off" type="button">Off</button>
+            <button class="btn ghost" id="spotify-on" type="button">On</button>
+          </div>
+        </div>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>Spotify name</div>
+            <p>The name the Spotify app shows in the Connect list.</p>
+          </div>
+          <form class="set-field" id="spotify-name-form">
+            <input id="spotify-name" name="spotify_name" type="text" maxlength="50" autocomplete="off" spellcheck="false">
+            <button class="btn primary" id="spotify-name-save" type="submit">Save</button>
           </form>
         </div>
       </div>
@@ -852,6 +894,8 @@
       output: "browser",
       host: { playing: false, paused: false, name: "", position: 0, duration: 0 },
       airplay: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "", name: "Gigawatt" },
+      dlna: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "", name: "Gigawatt" },
+      spotify: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "", name: "Gigawatt" },
       bins: new Float32Array(48),
       uploading: false
     };
@@ -1078,8 +1122,45 @@
       });
     }
 
+    function liveCast() {
+      if (state.airplay && state.airplay.active) return Object.assign({ kicker: "AirPlay" }, state.airplay);
+      if (state.spotify && state.spotify.active) return Object.assign({ kicker: "Spotify" }, state.spotify);
+      if (state.dlna && state.dlna.active) return Object.assign({ kicker: "DLNA" }, state.dlna);
+      return null;
+    }
+
     function airplayOn() {
-      return !!(state.airplay && state.airplay.active);
+      return !!liveCast();
+    }
+
+    function paintSourceRow(prefix, snap, labels) {
+      const onBtn = document.getElementById(prefix + "-on");
+      const offBtn = document.getElementById(prefix + "-off");
+      if (!onBtn) return;
+      const ap = snap || {};
+      onBtn.classList.toggle("on", !!ap.enabled);
+      offBtn.classList.toggle("on", !ap.enabled);
+      onBtn.disabled = !ap.available;
+      offBtn.disabled = !ap.available;
+      const shown = ap.name || "Gigawatt";
+      const nameInput = document.getElementById(prefix + "-name");
+      if (nameInput && document.activeElement !== nameInput && shown) nameInput.value = shown;
+      let note = labels.missing;
+      if (ap.available) {
+        if (ap.error) note = ap.error;
+        else if (ap.active) note = [ap.title || labels.idle, ap.artist, ap.album].filter(Boolean).join(" · ") + " · TOSLINK";
+        else if (ap.enabled) note = labels.on.replace("%s", shown);
+        else note = labels.off.replace("%s", shown);
+      }
+      document.getElementById(prefix + "-note").textContent = note;
+    }
+
+    function paintCastChip() {
+      const cast = liveCast();
+      const chip = document.getElementById("mode-chip");
+      chip.classList.toggle("hidden", !cast);
+      chip.classList.toggle("live", !!cast);
+      chip.textContent = cast ? String(cast.kicker || "").toUpperCase() : "AIRPLAY";
     }
 
     function stopLocalPlayback() {
@@ -1101,38 +1182,47 @@
     }
 
     function paintAirplaySettings() {
-      const ap = state.airplay || {};
-      const onBtn = document.getElementById("airplay-on");
-      const offBtn = document.getElementById("airplay-off");
-      if (!onBtn) return;
-      onBtn.classList.toggle("on", !!ap.enabled);
-      offBtn.classList.toggle("on", !ap.enabled);
-      onBtn.disabled = !ap.available;
-      offBtn.disabled = !ap.available;
-      const shown = ap.name || "Gigawatt";
-      const nameInput = document.getElementById("airplay-name");
-      if (nameInput && document.activeElement !== nameInput && shown) nameInput.value = shown;
-      let note = "AirPlay is not available on this host.";
-      if (ap.available) {
-        if (ap.error) note = ap.error;
-        else if (ap.active) note = [ap.title || "AirPlay", ap.artist, ap.album].filter(Boolean).join(" · ") + " · TOSLINK";
-        else if (ap.enabled) note = "On — looks for “" + shown + "” on iPhone or Mac. Audio plays TOSLINK.";
-        else note = "Off. When on, this host appears as “" + shown + "” on iPhone and Mac. Audio plays TOSLINK.";
-      }
-      document.getElementById("airplay-note").textContent = note;
-      const chip = document.getElementById("mode-chip");
-      chip.classList.toggle("hidden", !ap.active);
-      chip.classList.toggle("live", !!ap.active);
+      paintSourceRow("airplay", state.airplay, {
+        missing: "AirPlay is not available on this host.",
+        idle: "AirPlay",
+        on: "On — looks for “%s” on iPhone or Mac. Audio plays TOSLINK.",
+        off: "Off. When on, this host appears as “%s” on iPhone and Mac. Audio plays TOSLINK."
+      });
+      paintCastChip();
+    }
+
+    function paintDlnaSettings() {
+      paintSourceRow("dlna", state.dlna, {
+        missing: "DLNA is not available on this host.",
+        idle: "DLNA",
+        on: "On — looks for “%s” in BubbleUPnP, VLC, and other DLNA apps. Audio plays TOSLINK.",
+        off: "Off. When on, this host appears as “%s” in DLNA apps. Audio plays TOSLINK."
+      });
+      paintCastChip();
+    }
+
+    function paintSpotifySettings() {
+      paintSourceRow("spotify", state.spotify, {
+        missing: "Spotify Connect is not available on this host.",
+        idle: "Spotify",
+        on: "On — looks for “%s” in the Spotify app. Premium required. Audio plays TOSLINK.",
+        off: "Off. When on, this host appears as “%s” in Spotify. Premium required. Audio plays TOSLINK."
+      });
+      paintCastChip();
+    }
+
+    function applyCast(key, snap, paint) {
+      const next = snap || { available: false, enabled: false, active: false };
+      const became = !!(next.active && !(state[key] && state[key].active));
+      state[key] = next;
+      if (next.active) stopLocalPlayback();
+      if (became) showView("home");
+      if (paint) paint();
+      paintNow({ skipLib: true });
     }
 
     function applyAirplay(ap) {
-      const next = ap || { available: false, enabled: false, active: false };
-      const became = !!(next.active && !(state.airplay && state.airplay.active));
-      state.airplay = next;
-      if (next.active) stopLocalPlayback();
-      if (became) showView("home");
-      paintAirplaySettings();
-      paintNow({ skipLib: true });
+      applyCast("airplay", ap, paintAirplaySettings);
     }
 
     function applyNow(data) {
@@ -1145,9 +1235,10 @@
       if (data.ip) document.getElementById("set-ip").textContent = data.ip;
       if (data.output === "browser" || data.output === "optical") state.output = data.output;
       if (data.host) state.host = data.host;
-      if (data.airplay) {
-        applyAirplay(data.airplay);
-      } else {
+      if (data.airplay) applyCast("airplay", data.airplay, paintAirplaySettings);
+      if (data.dlna) applyCast("dlna", data.dlna, paintDlnaSettings);
+      if (data.spotify) applyCast("spotify", data.spotify, paintSpotifySettings);
+      if (!data.airplay && !data.dlna && !data.spotify) {
         paintOutputSettings();
         paintNow({ skipLib: true });
       }
@@ -1170,7 +1261,7 @@
     }
 
     function paintNow(opts) {
-      const ap = state.airplay || {};
+      const cast = liveCast();
       const track = currentTrack();
       const host = state.host || {};
       const opticalLive = state.output === "optical" && (host.playing || host.paused);
@@ -1178,10 +1269,10 @@
       let sub = track ? formatMeta(track) : routeLabel();
       let kicker = state.playing ? "Now playing" : (track ? "Paused" : "Standby");
       let homeSub = track ? formatMeta(track) : "Open Library and tap a track";
-      if (ap.active) {
-        title = ap.title || "AirPlay";
-        sub = [ap.artist, ap.album].filter(Boolean).join(" · ") || "AirPlay · TOSLINK";
-        kicker = "AirPlay";
+      if (cast) {
+        title = cast.title || cast.kicker;
+        sub = [cast.artist, cast.album].filter(Boolean).join(" · ") || (cast.kicker + " · TOSLINK");
+        kicker = cast.kicker;
         homeSub = sub;
       } else if (opticalLive) {
         const ht = state.tracks.find((t) => t.name === host.name);
@@ -1195,11 +1286,11 @@
       document.getElementById("home-title").textContent = title;
       document.getElementById("home-sub").textContent = homeSub;
       document.getElementById("home-kicker").textContent = kicker;
-      const live = ap.active ? false : (state.output === "optical" ? !!host.playing : state.playing);
+      const live = cast ? false : (state.output === "optical" ? !!host.playing : state.playing);
       document.getElementById("btn-play").textContent = live ? "❚❚" : "▶";
-      document.getElementById("btn-play").disabled = ap.active || !track;
-      document.getElementById("btn-prev").disabled = ap.active || state.tracks.length < 2;
-      document.getElementById("btn-next").disabled = ap.active || state.tracks.length < 2;
+      document.getElementById("btn-play").disabled = !!cast || !track;
+      document.getElementById("btn-prev").disabled = !!cast || state.tracks.length < 2;
+      document.getElementById("btn-next").disabled = !!cast || state.tracks.length < 2;
       if (!(opts && opts.skipLib)) paintLibrary();
     }
 
@@ -1521,7 +1612,9 @@
       applyTracks(status.tracks || []);
       if (status.output) state.output = status.output;
       if (status.host) state.host = status.host;
-      applyAirplay(status.airplay || {});
+      applyCast("airplay", status.airplay || {}, paintAirplaySettings);
+      applyCast("dlna", status.dlna || {}, paintDlnaSettings);
+      applyCast("spotify", status.spotify || {}, paintSpotifySettings);
       paintOutputSettings();
       startAirplayPoll();
       resize();
@@ -1641,6 +1734,36 @@
     document.getElementById("airplay-off").onclick = async () => {
       try { applyAirplay(await api("/api/airplay", { method: "POST", body: JSON.stringify({ enabled: false }) })); }
       catch (e) { document.getElementById("airplay-note").textContent = e.message || "could not disable AirPlay"; }
+    };
+
+    document.getElementById("dlna-name-form").onsubmit = async (ev) => {
+      ev.preventDefault();
+      const name = document.getElementById("dlna-name").value.trim();
+      try { applyCast("dlna", await api("/api/dlna", { method: "POST", body: JSON.stringify({ name }) }), paintDlnaSettings); }
+      catch (e) { document.getElementById("dlna-note").textContent = e.message || "could not save DLNA name"; }
+    };
+    document.getElementById("dlna-on").onclick = async () => {
+      try { applyCast("dlna", await api("/api/dlna", { method: "POST", body: JSON.stringify({ enabled: true }) }), paintDlnaSettings); }
+      catch (e) { document.getElementById("dlna-note").textContent = e.message || "could not enable DLNA"; }
+    };
+    document.getElementById("dlna-off").onclick = async () => {
+      try { applyCast("dlna", await api("/api/dlna", { method: "POST", body: JSON.stringify({ enabled: false }) }), paintDlnaSettings); }
+      catch (e) { document.getElementById("dlna-note").textContent = e.message || "could not disable DLNA"; }
+    };
+
+    document.getElementById("spotify-name-form").onsubmit = async (ev) => {
+      ev.preventDefault();
+      const name = document.getElementById("spotify-name").value.trim();
+      try { applyCast("spotify", await api("/api/spotify", { method: "POST", body: JSON.stringify({ name }) }), paintSpotifySettings); }
+      catch (e) { document.getElementById("spotify-note").textContent = e.message || "could not save Spotify name"; }
+    };
+    document.getElementById("spotify-on").onclick = async () => {
+      try { applyCast("spotify", await api("/api/spotify", { method: "POST", body: JSON.stringify({ enabled: true }) }), paintSpotifySettings); }
+      catch (e) { document.getElementById("spotify-note").textContent = e.message || "could not enable Spotify"; }
+    };
+    document.getElementById("spotify-off").onclick = async () => {
+      try { applyCast("spotify", await api("/api/spotify", { method: "POST", body: JSON.stringify({ enabled: false }) }), paintSpotifySettings); }
+      catch (e) { document.getElementById("spotify-note").textContent = e.message || "could not disable Spotify"; }
     };
 
     document.getElementById("btn-logout").onclick = async () => {
