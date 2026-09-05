@@ -1,6 +1,6 @@
-# Architecture — Gigawatt V0.1
+# Architecture — Gigawatt V0.2
 
-V0.1 is the **web app and local accounts**. It does not play audio yet. The goal after this is the same as Beta1: a music server for **MP3, FLAC, and Opus** on this host, optical TOSLINK later.
+V0.2 is the **web app, local accounts, library, and browser playback**. Optical TOSLINK is later. Formats: **MP3, FLAC, and Opus**.
 
 ## One process
 
@@ -10,13 +10,15 @@ V0.1 is the **web app and local accounts**. It does not play audio yet. The goal
 browser  --HTTP-->  python3 server.py :80
                          |
                          +-- GET  /                 app (login or shell)
-                         +-- GET  /api/auth/status  setup vs signed-in
+                         +-- GET  /api/auth/status  setup vs signed-in, library
                          +-- POST /api/auth/setup   first account
                          +-- POST /api/auth/login
                          +-- POST /api/auth/logout
+                         +-- GET  /api/library
+                         +-- GET  /api/media?name=  file stream (Range) for this browser
 ```
 
-No ffmpeg child in V0.1. No AirPlay. No second language.
+Playback is HTML5 audio in the page that opened the UI. A Web Audio analyser drives the Home visualizer. No ffmpeg child yet. No AirPlay.
 
 ## Accounts
 
@@ -34,8 +36,9 @@ Modern web-app chrome, not the Beta1 time-circuit HUD.
 
 - Gate: create account or sign in
 - App: top bar, side nav (Home / Library / Settings), bottom player dock
-- Library is an empty shelf on purpose
-- Player controls are visible and disabled
+- Home: now-playing visualizer
+- Library: tap to play
+- Player dock: play / pause / next / seek
 
 Name: **Gigawatt**.
 

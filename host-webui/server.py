@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.1 — local accounts and the web-app shell. Playback comes later."""
+"""Gigawatt V0.2 — local accounts, library, browser playback."""
 import hashlib
 import json
 import os
 import re
 import secrets
 import socket
+import sys
 import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse, unquote
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("WEBUI_PORT", "80"))
 MUSIC_DIR = os.environ.get("MUSIC_DIR", "/data/music")
 STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
-VERSION = "0.1"
+VERSION = "0.2"
 COOKIE = "gigawatt_session"
 SESSION_TTL = 30 * 24 * 3600
 PBKDF2_ROUNDS = 80000
 USER_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
+AUDIO_EXTS = {".mp3", ".flac", ".opus", ".ogg", ".wav", ".m4a", ".aac"}
+MIME = {
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".opus": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+}
 
 LOCK = threading.Lock()
 SESSIONS = {}
@@ -114,13 +125,114 @@ def host_snapshot():
     return {"hostname": hostname, "ip": ip}
 
 
+def pretty_title(name):
+    base = os.path.splitext(os.path.basename(name))[0]
+    base = base.replace("\uff5c", "—").replace("|", "—")
+    base = re.sub(r"^\d+\.\s*", "", base)
+    return re.sub(r"\s+", " ", base).strip() or name
+
+
+def list_tracks():
+    root = os.path.realpath(MUSIC_DIR)
+    tracks = []
+    if not os.path.isdir(root):
+        return tracks
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for filename in filenames:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in AUDIO_EXTS:
+                continue
+            full = os.path.join(dirpath, filename)
+            if not os.path.isfile(full):
+                continue
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            if rel.startswith("."):
+                continue
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                size = 0
+            tracks.append(
+                {
+                    "name": rel,
+                    "title": pretty_title(rel),
+                    "ext": ext.lstrip("."),
+                    "bytes": size,
+                }
+            )
+    tracks.sort(key=lambda t: t["title"].lower())
+    return tracks
+
+
+def safe_media_path(name):
+    name = unquote(name or "").replace("\\", "/").lstrip("/")
+    if not name or name in (".", "..") or ".." in name.split("/"):
+        return None
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in AUDIO_EXTS:
+        return None
+    root = os.path.realpath(MUSIC_DIR)
+    full = os.path.realpath(os.path.join(MUSIC_DIR, name))
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    if not os.path.isfile(full):
+        return None
+    return full
+
+
+def send_media(handler, full, head=False):
+    size = os.path.getsize(full)
+    ext = os.path.splitext(full)[1].lower()
+    mime = MIME.get(ext, "application/octet-stream")
+    start = 0
+    end = size - 1
+    code = 200
+    rng = handler.headers.get("Range") or ""
+    if rng.startswith("bytes=") and size > 0:
+        spec = rng.split("=", 1)[1].split("-")
+        try:
+            if spec[0]:
+                start = int(spec[0])
+            if len(spec) > 1 and spec[1]:
+                end = int(spec[1])
+        except ValueError:
+            handler.send_error(400, "bad range")
+            return
+        end = min(end, size - 1)
+        if start < 0 or start > end:
+            handler.send_response(416)
+            handler.send_header("Content-Range", "bytes */%s" % size)
+            handler.end_headers()
+            return
+        code = 206
+    length = end - start + 1
+    handler.send_response(code)
+    handler.send_header("Content-Type", mime)
+    handler.send_header("Content-Length", str(length))
+    handler.send_header("Accept-Ranges", "bytes")
+    handler.send_header("Cache-Control", "private, max-age=120")
+    if code == 206:
+        handler.send_header("Content-Range", "bytes %s-%s/%s" % (start, end, size))
+    handler.end_headers()
+    if head:
+        return
+    with open(full, "rb") as fh:
+        fh.seek(start)
+        left = length
+        while left > 0:
+            chunk = fh.read(min(65536, left))
+            if not chunk:
+                break
+            handler.wfile.write(chunk)
+            left -= len(chunk)
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=ROOT, **kwargs)
 
     def log_message(self, fmt, *args):
-        sys_stderr = __import__("sys").stderr
-        sys_stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
     def _json(self, code, payload):
         body = json.dumps(payload).encode("utf-8")
@@ -170,6 +282,13 @@ class Handler(SimpleHTTPRequestHandler):
     def _current_user(self):
         return session_user(self._cookie_token())
 
+    def _need_user(self):
+        user = self._current_user()
+        if user:
+            return user
+        self._json(401, {"ok": False, "error": "sign in first"})
+        return None
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -178,6 +297,7 @@ class Handler(SimpleHTTPRequestHandler):
                 users = load_users()
                 username = self._current_user()
             host = host_snapshot()
+            tracks = list_tracks() if username else []
             self._json(
                 200,
                 {
@@ -187,13 +307,48 @@ class Handler(SimpleHTTPRequestHandler):
                     "user": {"username": username} if username else None,
                     "host": host,
                     "formats": ["mp3", "flac", "opus"],
-                    "playback": False,
+                    "playback": True,
+                    "output": "browser",
+                    "tracks": tracks,
                 },
             )
+            return
+        if path == "/api/library":
+            if not self._need_user():
+                return
+            self._json(200, {"ok": True, "tracks": list_tracks()})
+            return
+        if path == "/api/media":
+            if not self._current_user():
+                self._json(401, {"ok": False, "error": "sign in first"})
+                return
+            qs = parse_qs(parsed.query)
+            name = (qs.get("name") or [""])[0]
+            full = safe_media_path(name)
+            if not full:
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            send_media(self, full, head=False)
             return
         if path in ("/", "/index.html"):
             self.path = "/index.html"
         return SimpleHTTPRequestHandler.do_GET(self)
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/media":
+            if not self._current_user():
+                self.send_error(401)
+                return
+            qs = parse_qs(parsed.query)
+            name = (qs.get("name") or [""])[0]
+            full = safe_media_path(name)
+            if not full:
+                self.send_error(404)
+                return
+            send_media(self, full, head=True)
+            return
+        return SimpleHTTPRequestHandler.do_HEAD(self)
 
     def do_POST(self):
         parsed = urlparse(self.path)
