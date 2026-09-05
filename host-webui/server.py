@@ -84,6 +84,7 @@ MIME = {
 LOCK = threading.Lock()
 SESSIONS = {}
 PROBE_CACHE = {}
+_INVENTORY = {"t": 0.0, "ident": None, "mem": None, "disk": None}
 AIRPLAY = None
 HOST = None
 DLNA = None
@@ -175,7 +176,7 @@ def _optical_ended():
         return
     if airplay_snapshot().get("active") or spotify_snapshot().get("active"):
         return
-    tracks = list_tracks()
+    tracks = list_tracks(probe=False)
     names = [t["name"] for t in tracks]
     if not names or HOST is None:
         return
@@ -300,6 +301,21 @@ def disk_usage(path="/data"):
         return {"total": total, "used": total - free, "free": free, "path": path}
     except Exception:
         return None
+
+
+def inventory(ttl=5.0):
+    """Reuse host/RAM/disk for the 1s /api/now poll. Fresh after ttl seconds."""
+    now = time.time()
+    if _INVENTORY["ident"] is not None and (now - _INVENTORY["t"]) < ttl:
+        return _INVENTORY["ident"], _INVENTORY["mem"], _INVENTORY["disk"]
+    ident = host_snapshot()
+    mem = meminfo()
+    disk = disk_usage("/data")
+    _INVENTORY["t"] = now
+    _INVENTORY["ident"] = ident
+    _INVENTORY["mem"] = mem
+    _INVENTORY["disk"] = disk
+    return ident, mem, disk
 
 
 def _clamp_int(value, lo, hi, default):
@@ -1042,7 +1058,7 @@ class Handler(SimpleHTTPRequestHandler):
                 users = load_users()
                 username = self._current_user()
             ident = host_snapshot()
-            tracks = list_tracks() if username else []
+            tracks = list_tracks(probe=False) if username else []
             player = load_player()
             self._json(
                 200,
@@ -1076,7 +1092,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             player = load_player()
             host = HOST.snapshot() if HOST is not None else {}
-            ident = host_snapshot()
+            ident, mem, disk = inventory()
             self._json(
                 200,
                 {
@@ -1090,8 +1106,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "nas": nas_snapshot(),
                     "hostname": ident.get("hostname"),
                     "ip": ident.get("ip"),
-                    "mem": meminfo(),
-                    "disk": disk_usage("/data"),
+                    "mem": mem,
+                    "disk": disk,
                 },
             )
             return

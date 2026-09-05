@@ -1,0 +1,86 @@
+Gigawatt V0.10 — full-tree debug
+================================
+Date: 2026-09-05
+Tree: origin/main @ c8340ec (V0.10) plus the small hot-path changes in
+this branch. This VM is x86_64 / Python 3.12. The live SHC-2000
+(192.168.1.178, armv7, Python 3.8) was not used.
+
+What is new since the last notes
+--------------------------------
+V0.7  DLNA renderer + Spotify Connect
+V0.8  SMB NAS via rclone FUSE
+V0.9  NAS browse by artist/album/track; Home renamed Now Playing;
+      Spotify idle /status + Pulse backend (PR #2)
+V0.10 TOSLINK EQ via ffmpeg; DLNA SOAP/HTTPS fixes
+
+Reviewed: server.py, hostplayer.py, airplay.py, dlna.py, spotify.py,
+nas.py, index.html, systemd unit, airplay/spotify/nas helpers.
+
+
+Runtime evidence (this VM)
+--------------------------
+1. Unauthenticated source still public
+   GET /server.py  -> 200, 50197 bytes
+   GET /dlna.py    -> 200, 49270 bytes
+   Same SimpleHTTPRequestHandler fall-through as V0.6.
+
+2. Invalid Content-Length still kills the worker
+   POST /api/auth/login Content-Length: abc -> empty reply (curl 52).
+   Process stays up. _read_json() still does int(header).
+
+3. Library probe cost
+   13 short WAV files, cold PROBE_CACHE:
+     list_tracks(probe=True)  423.2 ms
+     list_tracks(cached)        0.2 ms
+     list_tracks(probe=False)   0.1 ms
+   i.MX6 Cortex-A9 + ffprobe 4.2 will be several times slower.
+   100 FLAC files on first login or TOSLINK skip was a multi-second
+   stall: /api/auth/status and _optical_ended both called
+   list_tracks() with probe=True.
+
+4. python3 -m py_compile: all six modules OK.
+   host-webui/test_spotify.py: 11 tests OK.
+
+
+Bugs still open (not fixed in this pass)
+----------------------------------------
+P1  Static tree is world-readable. Do not put go-librespot or
+    rclone under /data/www.
+P1  Corrupt users.json still opens first-account setup.
+P2  HTTP Range bytes=-N still returns the start of the file.
+P2  HostPlayer.play() still accepts any file under the music/NAS
+    root (no AUDIO_EXTS).
+P2  Browser volume still POSTs /api/volume -> pactl sink volume.
+P2  Unauthenticated POST /api/upload does not consume the body.
+P3  Google Fonts still load from fonts.googleapis.com.
+P3  NAS optical play does not auto-advance (_optical_ended returns
+    when source=="nas").
+P3  EQ change while TOSLINK plays kills ffmpeg and restarts (0.4s
+    debounce). Gap + CPU spike on the Quad A9.
+
+
+V0.9 / V0.10 notes
+------------------
+NAS browse no longer flattens the share on Connect. Artist list is
+one scandir. Tracks on an artist folder with deep=1 still os.walk
+up to 2000 files over FUSE — can hitch on a large share.
+
+TOSLINK EQ: ffmpeg_eq_filter() skips bands under 0.05 dB. Flat EQ
+adds no -af (good). Harman builds a 9-filter chain. ffmpeg 4.2.2
+on the host has lowshelf / equalizer / highshelf.
+
+DLNA: HTTPS is rejected in play_url before ffmpeg. SOAP actions
+were filled in V0.10 (see docs/DLNA_RENDERER_DEBUG.txt).
+
+Spotify Connect wrapper on main already has the idle-status and
+Pulse-backend fixes from PR #2.
+
+
+Hot-path changes in this branch
+-------------------------------
+- _optical_ended() uses list_tracks(probe=False) so a skip does
+  not spawn N ffprobe children.
+- GET /api/auth/status lists the library without probing. Bitrate
+  / sample rate still come from GET /api/library.
+- GET /api/now reuses hostname, RAM, and /data disk for 5 seconds
+  instead of UDP + /proc + statvfs on every 1s poll.
