@@ -1,0 +1,266 @@
+Gigawatt Beta2 — Level 1 debug notes
+====================================
+Date: 2026-09-05
+Scope: static review of every source file in this repo, plus a local
+runtime pass of host-webui/server.py on 127.0.0.1:8765 (WEBUI_PORT,
+MUSIC_DIR=/tmp/gw-music, STATE_DIR=/tmp/gw-state).
+
+Level 1 here means: read the code, compile it, hit the HTTP surface,
+and record defects that are visible without a live SHC-2000. No
+production host (192.168.1.178) was touched.
+
+
+1. What was reviewed
+--------------------
+  host-webui/server.py
+  host-webui/hostplayer.py
+  host-webui/airplay.py
+  host-webui/index.html (markup, CSS, client JS)
+  host-webui/host-webui.service
+  host-webui/airplay/run-shairport
+  host-webui/airplay/shairport-sync.conf
+  README.md, docs/*, host-webui/README.md
+
+  python3 -m py_compile: PASS on server.py, hostplayer.py, airplay.py
+  (run environment is Python 3.12; target host is Python 3.8 — both
+  accept this syntax. import cgi emits a 3.12+ DeprecationWarning.)
+
+
+2. Confirmed at runtime
+-----------------------
+These were reproduced against the local server.
+
+P1  Unauthenticated source and directory listing
+    Handler subclasses SimpleHTTPRequestHandler with directory=ROOT
+    and only special-cases "/" and "/index.html". Everything else in
+    the web root is public.
+
+    GET /server.py      -> 200, full source (33958 bytes)
+    GET /hostplayer.py  -> 200
+    GET /airplay.py     -> 200
+    GET /airplay/       -> 200 HTML directory listing
+      (README.md, run-shairport, shairport-sync, lib/, conf)
+
+    On the real box, /data/www is the same tree. Anyone on the LAN
+    (no cookie) can download the app, the AirPlay wrapper, and if the
+    airplay/ folder is copied next to the UI, the shairport binary
+    listing. This also 404-serves favicon.ico via the same handler.
+
+P1  Corrupt or unreadable users.json re-opens first-account setup
+    load_users() returns [] on OSError or ValueError. After writing
+    "NOT JSON" to users.json, GET /api/auth/status reported
+    setup_required: true. POST /api/auth/setup then accepts a new
+    account. A truncated write, bad disk, or a botched edit of
+    /data/gigawatt/users.json is an unauthenticated takeover on the
+    LAN.
+
+P2  Invalid Content-Length crashes the request thread
+    POST /api/auth/login with Content-Length: abc:
+
+      server.py _read_json()
+        length = int(self.headers.get("Content-Length") or 0)
+      ValueError: invalid literal for int() with base 10: 'abc'
+
+    Client gets an empty reply (curl 52). ThreadingHTTPServer keeps
+    running; only that worker thread dies. save_uploads() has the
+    same unguarded int() on Content-Length.
+
+P2  HTTP Range suffix is implemented backwards
+    File test.mp3 was 12 bytes ("hello audio\n").
+    Request:  Range: bytes=-5
+    Actual:   206, Content-Range: bytes 0-5/12, body "hello "
+    Spec:     last 5 bytes, "udio\n"
+
+    HTML5 audio usually sends bytes=N- or bytes=0-, so browser
+    playback may still work. Clients that send a suffix range get
+    the start of the file, not the end.
+
+P2  Host player accepts any file under MUSIC_DIR
+    POST /api/play {"name":"notes.txt"} with a signed-in session
+    returned ok:true and host.name "notes.txt". hostplayer.play()
+    only checks realpath-under-MUSIC_DIR and isfile(). It does not
+    use safe_media_path() / AUDIO_EXTS. A signed-in user can point
+    ffmpeg at leftover .part files or any other path in /data/music.
+
+P3  GET /api/auth/status leaks host inventory while logged out
+    Unauthenticated status still returned hostname, LAN IP, RAM
+    totals, version, volume, EQ, output, and AirPlay availability.
+    Tracks are correctly empty. Fine for a trusted LAN appliance;
+    not fine if the Ethernet port is untrusted.
+
+
+3. Defects from code (not fully reproduced here)
+------------------------------------------------
+Need Pulse, ffmpeg failing on optical, or shairport-sync.
+
+P2  Browser volume writes Pulse sink volume
+    index.html applyVolume() always POSTs /api/volume.
+    server.py /api/volume always calls HOST.set_volume() ->
+    pactl set-sink-volume. Moving the in-page slider therefore
+    changes TOSLINK / AirPlay loudness even when output is
+    "browser".
+
+P2  AirPlay "active" can stick after audio stops
+    airplay.py _pulse_watch(): if Pulse no longer shows a
+    shairport sink-input but metadata already set a title,
+    active is left True. Play/prev/next stay disabled
+    (index.html paintNow) until ssnc.pend arrives. A missed
+    pend leaves the UI in a dead AirPlay lock.
+
+P2  Failed TOSLINK play can auto-advance the library
+    HostPlayer._watch treats any process exit (not pause) as
+    end-of-track and calls on_end -> server._optical_ended ->
+    HOST.play(next). ffmpeg dying on a bad/unsupported file
+    skips forward. If several files fail, this can walk the
+    whole library.
+
+P2  Unauthenticated POST /api/upload does not read the body
+    _need_user() writes 401 and returns. save_uploads() never
+    runs. Default protocol is HTTP/1.0 so the socket usually
+    closes (desync not seen in the HTTP/1.0 probe). If the
+    service is switched to HTTP/1.1 keep-alive, the next
+    request on that connection will parse leftover multipart
+    bytes as HTTP.
+
+P3  Read-modify-write races on player.json and tags
+    save_player() / load_player() are not under LOCK.
+    Concurrent /api/volume, /api/eq, /api/output, /api/airplay
+    can drop a field. PROBE_CACHE and SESSIONS are also mutated
+    from many threads without a lock (CPython dict ops usually
+    survive; expired-session pop can still race).
+
+P3  seek() drops the lock, then play()
+    Another /api/play can start a different track in the gap.
+
+P3  Upload size is enforced after the bytes are on disk
+    Each file is copyfileobj'd to dest+".part", then rejected
+    if size > 90 MB. Request Content-Length is only refused
+    above MAX_UPLOAD * 8 (720 MB). /data is ~3.1 GB. A large
+    POST can fill the partition before the 90 MB check.
+
+P3  safe_music_name() rejects a legitimate ".." in a filename
+    "track..2.mp3" is dropped (".." in name). Uploads also
+    flatten to basename, so a file that list_tracks() found
+    in a subdirectory cannot be re-uploaded to the same
+    relative path.
+
+P3  Delete / manage-save does not stop TOSLINK if that file
+    is the current HOST.name. Playback then points at a
+    missing path until the process exits.
+
+P3  Optical Play button when nothing is running
+    togglePlay() in optical mode always POSTs /api/pause.
+    If index is set but host.playing/paused are false (crash,
+    failed start, or leftover name after ffmpeg exit), the
+    Play button is enabled and pause fails with
+    "nothing playing". User must tap the library row again.
+
+P3  Logout does not stop host playback
+    Sign out pauses the <audio> element only. TOSLINK and
+    AirPlay keep going.
+
+P3  Metadata FIFO is world-writable
+    /tmp/gigawatt-airplay.meta is created 0666. Any local
+    account can inject XML metadata or stall the reader.
+    Single-user image, but it is still an open pipe.
+
+P3  Range parser does not support multipart ranges
+    bytes=0-1,2-3 hits ValueError -> 400. Rare for <audio>.
+
+
+4. Docs and deploy drift (causes real breakages)
+------------------------------------------------
+  README.md still describes V0.2 ("Optical TOSLINK is still later")
+  while the tree is V0.6 with TOSLINK + AirPlay.
+
+  docs/ARCHITECTURE.md is V0.2: no ffmpeg child, no AirPlay, no
+  upload/EQ/volume routes.
+
+  docs/DEPLOY.md and host-webui/README.md say copy only
+  index.html and server.py. V0.5+ also needs hostplayer.py,
+  airplay.py, and (on the box) /data/opt/airplay. Following
+  the README after a restart ImportError-crashes the unit.
+
+  API "formats" is ["mp3","flac","opus"] but AUDIO_EXTS and the
+  file picker also allow ogg, wav, m4a, aac.
+
+
+5. Client (index.html) notes
+----------------------------
+  Track titles and genres use textContent after a fixed innerHTML
+  skeleton. No XSS found in library paint.
+
+  Google Fonts: fonts.googleapis.com + fonts.gstatic.com. Settings
+  copy says nothing is sent to the cloud. First paint phones Google
+  if the tablet/phone has a WAN route. Offline, Manrope just fails
+  and the stack falls back to system UI fonts.
+
+  Visualizer rAF and /api/now every 1s run for the life of the
+  signed-in page, including Settings/EQ. Extra work on i.MX6.
+
+  if (startAt) skips a 0 second seek — correct.
+  if (startAt) is also used as the optical start; 0 is fine.
+
+  showGate({setup_required:true}) on any status fetch failure
+  (line ~1823). A down service looks like "create the first
+  account" until the hint string is swapped. Misleading if
+  users.json already exists and the process is simply dead.
+
+  No CSRF token. Cookie is HttpOnly; SameSite=Lax. POSTs are
+  JSON, so classic HTML form CSRF does not apply. Acceptable
+  for a LAN appliance; not for a WAN bind.
+
+
+6. Auth / session (static)
+--------------------------
+  PBKDF2-HMAC-SHA256, 80k rounds, 16-byte hex salt, compare_digest
+  after a length check. Reasonable for a LAN box; 80k is below
+  current OWASP SHA-256 iteration guidance.
+
+  Login returns the same error string for unknown user and bad
+  password, but unknown user skips PBKDF2. Username timing leak.
+
+  Sessions are in-process memory, 30-day TTL from creation (not
+  sliding). Restart logs everyone out — matches ARCHITECTURE.md.
+
+  Cookie has no Secure flag (correct for http:// :80). No
+  Path restriction beyond /.
+
+  USER_RE is tight (3–32 [A-Za-z0-9._-]). Password 8–200 chars.
+  No lockout / backoff on /api/auth/login.
+
+
+7. Things that look OK at Level 1
+---------------------------------
+  safe_media_path() realpath + ".." split + extension allow-list
+  for /api/media, delete, and tag.
+
+  Password file chmod 0600 after replace; atomic tmp+os.replace
+  for users, library tags, and player.json.
+
+  AirPlay name allow-list blocks quote / percent injection into
+  shairport-sync.conf.
+
+  HostPlayer ffmpeg path is shlex.quote'd; start time is %.3f.
+
+  Library UI does not put user filenames into innerHTML.
+
+  systemd unit: User=RPM, CAP_NET_BIND_SERVICE only, Restart=always.
+
+
+8. Environment used for the runtime pass
+----------------------------------------
+  Not the SHC-2000. No Pulse sink, no /data, no shairport binary
+  (AirPlay.available() was false). HostPlayer.play() still accepted
+  notes.txt. Directory listing and source GET are independent of
+  hardware and will look the same on 192.168.1.178.
+
+
+9. Suggested next debug levels
+------------------------------
+  Level 2: on 192.168.1.178, optical play/pause/seek, AirPlay
+  pbeg/pend, upload of a real FLAC, delete-while-playing,
+  volume vs TOSLINK coupling.
+
+  Level 3: fill /data, concurrent volume+EQ POSTs, ffmpeg crash
+  skip-loop, keep-alive upload 401, users.json chmod/owner.
