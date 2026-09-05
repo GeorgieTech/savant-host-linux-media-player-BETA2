@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.4 — library, browser playback, volume, EQ."""
+"""Gigawatt V0.5 — library, browser playback, volume, EQ, AirPlay 1."""
 import cgi
 import hashlib
 import json
@@ -16,6 +16,8 @@ from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, unquote
 
+from airplay import AirPlay
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("WEBUI_PORT", "80"))
 MUSIC_DIR = os.environ.get("MUSIC_DIR", "/data/music")
@@ -23,7 +25,8 @@ STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
-VERSION = "0.4"
+VERSION = "0.5"
+AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 EQ_BANDS = 10
 MAX_UPLOAD = 90 * 1024 * 1024
 COOKIE = "gigawatt_session"
@@ -56,6 +59,26 @@ MIME = {
 LOCK = threading.Lock()
 SESSIONS = {}
 PROBE_CACHE = {}
+AIRPLAY = None
+
+
+def airplay_snapshot():
+    if AIRPLAY is None:
+        return {
+            "available": False,
+            "enabled": False,
+            "active": False,
+            "title": "",
+            "artist": "",
+            "album": "",
+            "client": "",
+            "error": "",
+        }
+    return AIRPLAY.snapshot()
+
+
+def _on_airplay_begin():
+    return
 
 
 def _now():
@@ -176,15 +199,18 @@ def load_player():
     return {
         "volume": _clamp_int(data.get("volume"), 0, 100, 80),
         "eq": _clamp_eq(data.get("eq")),
+        "airplay": bool(data.get("airplay")),
     }
 
 
-def save_player(volume=None, eq=None):
+def save_player(volume=None, eq=None, airplay=None):
     current = load_player()
     if volume is not None:
         current["volume"] = _clamp_int(volume, 0, 100, current["volume"])
     if eq is not None:
         current["eq"] = _clamp_eq(eq)
+    if airplay is not None:
+        current["airplay"] = bool(airplay)
     ensure_dirs()
     tmp = PLAYER_FILE + ".tmp"
     with open(tmp, "w") as fh:
@@ -642,8 +668,16 @@ class Handler(SimpleHTTPRequestHandler):
                     "genres": list(GENRES),
                     "volume": player["volume"],
                     "eq": player["eq"],
+                    "airplay": airplay_snapshot(),
                 },
             )
+            return
+        if path == "/api/airplay":
+            if not self._need_user():
+                return
+            snap = airplay_snapshot()
+            snap["ok"] = True
+            self._json(200, snap)
             return
         if path == "/api/library":
             if not self._need_user():
@@ -730,6 +764,22 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             player = save_player(eq=data.get("eq"))
             self._json(200, {"ok": True, "eq": player["eq"]})
+            return
+        if path == "/api/airplay":
+            if not self._need_user():
+                return
+            want = data.get("enabled")
+            if want is None:
+                want = data.get("airplay")
+            want = bool(want)
+            save_player(airplay=want)
+            if AIRPLAY is None:
+                self._json(409, {"ok": False, "error": "AirPlay is not available on this host"})
+                return
+            ok = AIRPLAY.set_enabled(want)
+            snap = airplay_snapshot()
+            snap["ok"] = ok
+            self._json(200 if ok else 409, snap)
             return
         if path == "/api/library/save":
             if not self._need_user():
@@ -832,8 +882,12 @@ def _validate_account(username, password, confirm):
 
 
 def main():
+    global AIRPLAY
     ensure_dirs()
     os.chdir(ROOT)
+    AIRPLAY = AirPlay(AIRPLAY_DIR, on_begin=_on_airplay_begin)
+    if load_player().get("airplay"):
+        AIRPLAY.set_enabled(True)
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Gigawatt V%s on 0.0.0.0:%s" % (VERSION, PORT), flush=True)
     try:

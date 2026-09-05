@@ -1,4 +1,4 @@
-# host-webui (Gigawatt V0.4)
+# host-webui (Gigawatt V0.5)
 
 Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 
@@ -12,6 +12,8 @@ Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 - `POST /api/upload` — multipart `file` fields into `/data/music`
 - `POST /api/volume` — `{volume}` 0–100
 - `POST /api/eq` — `{eq: [10 gains in dB]}`
+- `GET /api/airplay` — `{available, enabled, active, title, artist, album, client}`
+- `POST /api/airplay` — `{enabled}` starts/stops shairport-sync
 - `POST /api/library/save` — `{tags: {name: genre}, delete: [name]}` after Manage
 - `POST /api/tag` — `{name, genre}` (empty genre clears)
 - `POST /api/delete` — `{name}`

@@ -1,5 +1,12 @@
 # Changelog
 
+## V0.5 — AirPlay 1
+
+- Settings: AirPlay On/Off. Host advertises as **Gigawatt**
+- iPhone/Mac audio plays TOSLINK via Pulse
+- Local browser playback stops when an AirPlay session begins
+- Home and the player bar show the AirPlay title / artist / album
+
 ## V0.4 — volume + EQ
 
 - Bottom player: Volume slider (0–100), same type as Beta1

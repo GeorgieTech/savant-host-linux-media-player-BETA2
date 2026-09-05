@@ -160,6 +160,13 @@
       background: var(--bg-elev);
       border: 1px solid var(--line);
     }
+    .chip.live {
+      color: var(--gold);
+      border-color: rgba(226,179,64,0.45);
+      background: var(--gold-dim);
+    }
+    .airplay-row { align-items: flex-start; }
+    .airplay-row > div:first-child { max-width: 28rem; }
     nav.side {
       grid-area: side;
       border-right: 1px solid var(--line);
@@ -584,6 +591,7 @@
         Gigawatt
       </div>
       <div class="top-right">
+        <span class="chip hidden" id="mode-chip">AIRPLAY</span>
         <span class="chip" id="who">—</span>
         <button class="btn ghost" id="btn-logout" type="button" style="height:36px;padding:0 12px;">Sign out</button>
       </div>
@@ -639,8 +647,18 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.4</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.5</span></div>
         <div class="row"><div>Audio out</div><span>This browser</span></div>
+        <div class="row airplay-row">
+          <div>
+            <div>AirPlay</div>
+            <span id="airplay-note">Off. When on, this host appears as Gigawatt on iPhone and Mac. Audio plays the optical jack.</span>
+          </div>
+          <div class="lib-actions" id="airplay-btns">
+            <button class="btn ghost" id="airplay-off" type="button">Off</button>
+            <button class="btn ghost" id="airplay-on" type="button">On</button>
+          </div>
+        </div>
       </div>
     </main>
     <footer class="player">
@@ -731,12 +749,14 @@
       volume: 80,
       eq: EQ_BANDS.map(() => 0),
       eqPreset: "flat",
+      airplay: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "" },
       bins: new Float32Array(48)
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
     let eqNodes = [];
     let volTimer = null;
     let eqTimer = null;
+    let airplayTimer = null;
 
     async function api(path, opts) {
       const res = await fetch(path, Object.assign({
@@ -922,21 +942,70 @@
       });
     }
 
-    function paintNow() {
+    function airplayOn() {
+      return !!(state.airplay && state.airplay.active);
+    }
+
+    function stopLocalPlayback() {
+      try { deck.pause(); } catch (_e) {}
+      state.playing = false;
+    }
+
+    function paintAirplaySettings() {
+      const ap = state.airplay || {};
+      const onBtn = document.getElementById("airplay-on");
+      const offBtn = document.getElementById("airplay-off");
+      if (!onBtn) return;
+      onBtn.classList.toggle("on", !!ap.enabled);
+      offBtn.classList.toggle("on", !ap.enabled);
+      onBtn.disabled = !ap.available;
+      offBtn.disabled = !ap.available;
+      let note = "AirPlay is not available on this host.";
+      if (ap.available) {
+        if (ap.error) note = ap.error;
+        else if (ap.active) note = [ap.title || "AirPlay", ap.artist, ap.album].filter(Boolean).join(" · ") + " · optical";
+        else if (ap.enabled) note = "On — looks for Gigawatt on iPhone or Mac. Audio plays the optical jack.";
+        else note = "Off. When on, this host appears as Gigawatt on iPhone and Mac. Audio plays the optical jack.";
+      }
+      document.getElementById("airplay-note").textContent = note;
+      const chip = document.getElementById("mode-chip");
+      chip.classList.toggle("hidden", !ap.active);
+      chip.classList.toggle("live", !!ap.active);
+    }
+
+    function applyAirplay(ap) {
+      const next = ap || { available: false, enabled: false, active: false };
+      const became = !!(next.active && !(state.airplay && state.airplay.active));
+      state.airplay = next;
+      if (next.active) stopLocalPlayback();
+      if (became) showView("home");
+      paintAirplaySettings();
+      paintNow({ skipLib: true });
+    }
+
+    function paintNow(opts) {
+      const ap = state.airplay || {};
       const track = currentTrack();
-      const title = track ? track.title : "Nothing playing";
-      const meta = formatMeta(track);
-      const sub = track ? meta : "This browser";
+      let title = track ? track.title : "Nothing playing";
+      let sub = track ? formatMeta(track) : "This browser";
+      let kicker = state.playing ? "Now playing" : (track ? "Paused" : "Standby");
+      let homeSub = track ? formatMeta(track) : "Open Library and tap a track";
+      if (ap.active) {
+        title = ap.title || "AirPlay";
+        sub = [ap.artist, ap.album].filter(Boolean).join(" · ") || "AirPlay · optical";
+        kicker = "AirPlay";
+        homeSub = sub;
+      }
       document.getElementById("now-title").textContent = title;
       document.getElementById("now-sub").textContent = sub;
       document.getElementById("home-title").textContent = title;
-      document.getElementById("home-sub").textContent = track ? meta : "Open Library and tap a track";
-      document.getElementById("home-kicker").textContent = state.playing ? "Now playing" : (track ? "Paused" : "Standby");
+      document.getElementById("home-sub").textContent = homeSub;
+      document.getElementById("home-kicker").textContent = kicker;
       document.getElementById("btn-play").textContent = state.playing ? "❚❚" : "▶";
-      document.getElementById("btn-play").disabled = !track;
-      document.getElementById("btn-prev").disabled = state.tracks.length < 2;
-      document.getElementById("btn-next").disabled = state.tracks.length < 2;
-      paintLibrary();
+      document.getElementById("btn-play").disabled = ap.active || !track;
+      document.getElementById("btn-prev").disabled = ap.active || state.tracks.length < 2;
+      document.getElementById("btn-next").disabled = ap.active || state.tracks.length < 2;
+      if (!(opts && opts.skipLib)) paintLibrary();
     }
 
     function fmtGain(n) {
@@ -1088,6 +1157,7 @@
     }
 
     function playIndex(i) {
+      if (airplayOn()) return;
       const track = state.tracks[i];
       if (!track) return;
       state.index = i;
@@ -1100,6 +1170,7 @@
     }
 
     function togglePlay() {
+      if (airplayOn()) return;
       if (!currentTrack()) {
         if (state.tracks[0]) playIndex(0);
         return;
@@ -1158,6 +1229,9 @@
       const h = canvas.clientHeight || 1;
       if (canvas.width === 0) resize();
       let energy = 0.06;
+      if (airplayOn() && !state.playing) {
+        energy = 0.22 + 0.12 * (0.5 + 0.5 * Math.sin(ts / 280));
+      }
       if (analyser && state.playing) {
         analyser.getByteFrequencyData(freq);
         analyser.getByteTimeDomainData(timeBuf);
@@ -1171,6 +1245,8 @@
         if (freq && state.playing) {
           const idx = Math.min(freq.length - 1, Math.floor(Math.pow(i / n, 1.4) * freq.length));
           target = freq[idx] / 255;
+        } else if (airplayOn()) {
+          target = energy * (0.35 + 0.65 * Math.abs(Math.sin(ts / 220 + i * 0.33)));
         }
         state.bins[i] += (target - state.bins[i]) * 0.28;
       }
@@ -1196,7 +1272,7 @@
       }
       ctx.beginPath();
       ctx.arc(cx, cy, 18 + energy * 26, 0, Math.PI * 2);
-      ctx.fillStyle = state.playing ? "rgba(226,179,64," + (0.12 + energy * 0.18) + ")" : "rgba(255,255,255,0.04)";
+      ctx.fillStyle = (state.playing || airplayOn()) ? "rgba(226,179,64," + (0.12 + energy * 0.18) + ")" : "rgba(255,255,255,0.04)";
       ctx.fill();
       requestAnimationFrame(tick);
     }
@@ -1210,10 +1286,27 @@
       applyEqGains(status.eq || EQ_BANDS.map(() => 0), false);
       paintEq();
       applyTracks(status.tracks || []);
+      applyAirplay(status.airplay || {});
+      startAirplayPoll();
       resize();
     }
 
+    function startAirplayPoll() {
+      stopAirplayPoll();
+      airplayTimer = setInterval(async () => {
+        try { applyAirplay(await api("/api/airplay")); } catch (_e) {}
+      }, 1000);
+    }
+
+    function stopAirplayPoll() {
+      if (airplayTimer) {
+        clearInterval(airplayTimer);
+        airplayTimer = null;
+      }
+    }
+
     function showGate(status) {
+      stopAirplayPoll();
       app.classList.add("hidden");
       gate.classList.remove("hidden");
       const setup = !!status.setup_required;
@@ -1271,6 +1364,15 @@
         btn.disabled = false;
       }
     });
+
+    document.getElementById("airplay-on").onclick = async () => {
+      try { applyAirplay(await api("/api/airplay", { method: "POST", body: JSON.stringify({ enabled: true }) })); }
+      catch (e) { document.getElementById("airplay-note").textContent = e.message || "could not enable AirPlay"; }
+    };
+    document.getElementById("airplay-off").onclick = async () => {
+      try { applyAirplay(await api("/api/airplay", { method: "POST", body: JSON.stringify({ enabled: false }) })); }
+      catch (e) { document.getElementById("airplay-note").textContent = e.message || "could not disable AirPlay"; }
+    };
 
     document.getElementById("btn-logout").onclick = async () => {
       try { deck.pause(); } catch (_e) {}
