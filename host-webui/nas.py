@@ -180,8 +180,8 @@ class NasShare:
                 self.error = str(exc)
                 self.proc = None
                 return False
-            for _ in range(25):
-                time.sleep(0.2)
+            for _ in range(40):
+                time.sleep(0.25)
                 if self.proc.poll() is not None:
                     err = b""
                     try:

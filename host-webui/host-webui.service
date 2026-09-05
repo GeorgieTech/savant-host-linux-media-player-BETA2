@@ -11,8 +11,8 @@ WorkingDirectory=/data/www
 ExecStart=/usr/bin/python3 /data/www/server.py
 Restart=always
 RestartSec=2
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_ADMIN
 Environment=WEBUI_PORT=80
 Environment=MUSIC_DIR=/data/music
 Environment=STATE_DIR=/data/gigawatt
