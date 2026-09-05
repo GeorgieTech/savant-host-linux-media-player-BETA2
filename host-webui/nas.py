@@ -143,7 +143,10 @@ class NasShare:
             except Exception as exc:
                 self.error = str(exc)
                 return False
-            os.makedirs(self.mountpoint, exist_ok=True)
+            try:
+                os.makedirs(self.mountpoint, exist_ok=True)
+            except OSError:
+                pass
             env = self._env()
             remote = self._remote_path_locked()
             cmd = [

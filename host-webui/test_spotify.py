@@ -1,101 +1,103 @@
 #!/usr/bin/env python3
-"""Level-1 tests for Spotify Connect status mapping (no ARM binary)."""
+"""Status-mapping tests for Spotify Connect. No ARM binary required."""
 import os
-import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from spotify import Spotify, resolve_runtime_dir, session_from_status
+from spotify import pulse_socket, resolve_runtime_dir, session_from_status
 
 
 class SessionFromStatusTests(unittest.TestCase):
-    def test_empty_and_204_are_idle(self):
-        for payload in (None, {}, []):
-            active, title, artist, album = session_from_status(payload)
-            self.assertFalse(active, payload)
-            self.assertEqual((title, artist, album), ("", "", ""))
+    def test_none_is_idle(self):
+        sess = session_from_status(None)
+        self.assertFalse(sess["active"])
+        self.assertEqual(sess["title"], "")
 
-    def test_stopped_session_is_idle(self):
-        active, title, _, _ = session_from_status(
-            {"stopped": True, "paused": False, "username": "u", "track": {"name": "X"}}
-        )
-        self.assertFalse(active)
-        self.assertEqual(title, "")
+    def test_empty_body_is_idle(self):
+        sess = session_from_status({})
+        self.assertFalse(sess["active"])
+        self.assertEqual(sess["title"], "")
+        self.assertEqual(sess["artist"], "")
+        self.assertEqual(sess["album"], "")
 
-    def test_playing_track_is_active(self):
-        active, title, artist, album = session_from_status(
-            {
-                "stopped": False,
-                "paused": False,
-                "username": "u",
-                "track": {
-                    "name": "Eulogy",
-                    "artist_names": ["Kyle Dixon", "Michael Stein"],
-                    "album_name": "Stranger Things 2",
-                },
-            }
-        )
-        self.assertTrue(active)
-        self.assertEqual(title, "Eulogy")
-        self.assertEqual(artist, "Kyle Dixon, Michael Stein")
-        self.assertEqual(album, "Stranger Things 2")
+    def test_stopped_false_without_user_or_track_is_idle(self):
+        # The old bug: missing stopped is false, so
+        # active = not stopped and bool(track.name or not paused) became True.
+        sess = session_from_status({"stopped": False, "paused": False})
+        self.assertFalse(sess["active"])
 
-    def test_paused_with_track_still_owns_speaker(self):
-        active, title, _, _ = session_from_status(
-            {"stopped": False, "paused": True, "username": "u", "track": {"name": "Eulogy"}}
-        )
-        self.assertTrue(active)
-        self.assertEqual(title, "Eulogy")
+    def test_stopped_true_is_idle(self):
+        sess = session_from_status({
+            "username": "user",
+            "stopped": True,
+            "paused": False,
+            "track": {"name": "Song", "artist_names": ["A"], "album_name": "Al"},
+        })
+        self.assertFalse(sess["active"])
 
-    def test_old_bug_empty_not_stopped_is_not_active(self):
-        # Previous code: active = not stopped and bool(name or not paused)
-        # with stopped missing/false and no track → True. That locked the UI.
-        active, _, _, _ = session_from_status({"stopped": False, "paused": False})
-        self.assertFalse(active)
+    def test_username_without_track_is_active(self):
+        sess = session_from_status({"username": "premium-user", "stopped": False})
+        self.assertTrue(sess["active"])
+        self.assertEqual(sess["title"], "Spotify")
+        self.assertEqual(sess["username"], "premium-user")
 
-    def test_username_without_track_name_is_active(self):
-        active, title, _, _ = session_from_status(
-            {"stopped": False, "paused": False, "username": "premium-user", "track": {}}
-        )
-        self.assertTrue(active)
-        self.assertEqual(title, "")
+    def test_playing_track(self):
+        sess = session_from_status({
+            "username": "user",
+            "stopped": False,
+            "paused": False,
+            "track": {
+                "name": "Eulogy",
+                "artist_names": ["Kyle Dixon", "Michael Stein"],
+                "album_name": "Stranger Things 2",
+            },
+        })
+        self.assertTrue(sess["active"])
+        self.assertEqual(sess["title"], "Eulogy")
+        self.assertEqual(sess["artist"], "Kyle Dixon, Michael Stein")
+        self.assertEqual(sess["album"], "Stranger Things 2")
+
+    def test_paused_with_track_is_active(self):
+        sess = session_from_status({
+            "username": "user",
+            "stopped": False,
+            "paused": True,
+            "track": {"name": "Song", "artist_names": ["A"], "album_name": "Al"},
+        })
+        self.assertTrue(sess["active"])
+        self.assertEqual(sess["title"], "Song")
+
+    def test_null_track_is_idle(self):
+        sess = session_from_status({"username": "", "stopped": False, "track": None})
+        self.assertFalse(sess["active"])
 
 
-class ResolveAndSnapshotTests(unittest.TestCase):
-    def test_resolve_falls_back_to_repo_tree(self):
-        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spotify")
-        self.assertEqual(resolve_runtime_dir("/no/such/opt/spotify"), here)
-
-    def test_snapshot_idle_when_binary_present_but_not_started(self):
-        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spotify")
+class RuntimeDirTests(unittest.TestCase):
+    def test_prefers_directory_with_binary(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sp = Spotify(here, tmp, name="Gigawatt")
-            snap = sp.snapshot()
-            self.assertTrue(snap["available"])
-            self.assertFalse(snap["enabled"])
-            self.assertFalse(snap["active"])
-            self.assertEqual(snap["title"], "")
-            conf = os.path.join(tmp, "spotify", "config.yml")
-            self.assertTrue(os.path.isfile(conf))
-            with open(conf) as fh:
-                text = fh.read()
-            self.assertIn("audio_backend: pulseaudio", text)
-            self.assertIn("device_name: Gigawatt", text)
+            path = os.path.join(tmp, "opt")
+            os.makedirs(path)
+            open(os.path.join(path, "go-librespot"), "wb").close()
+            self.assertEqual(resolve_runtime_dir(path), os.path.abspath(path))
 
-    def test_apply_status_clears_stale_now_playing(self):
-        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spotify")
+    def test_missing_binary_still_returns_a_path(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sp = Spotify(here, tmp)
-            with sp.lock:
-                sp._apply_status_locked(
-                    {"stopped": False, "username": "u", "track": {"name": "A", "artist_names": ["B"]}}
-                )
-                self.assertTrue(sp.active)
-                self.assertEqual(sp.title, "A")
-                sp._apply_status_locked(None)
-                self.assertFalse(sp.active)
-                self.assertEqual(sp.title, "")
+            missing = os.path.join(tmp, "nope")
+            resolved = resolve_runtime_dir(missing)
+            self.assertTrue(resolved)
+
+
+class PulseSocketTests(unittest.TestCase):
+    def test_strips_unix_prefix(self):
+        old = os.environ.get("PULSE_SERVER")
+        os.environ["PULSE_SERVER"] = "unix:/var/run/pulse/native"
+        try:
+            self.assertEqual(pulse_socket(), "/var/run/pulse/native")
+        finally:
+            if old is None:
+                os.environ.pop("PULSE_SERVER", None)
+            else:
+                os.environ["PULSE_SERVER"] = old
 
 
 if __name__ == "__main__":

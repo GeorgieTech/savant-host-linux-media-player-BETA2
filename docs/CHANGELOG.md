@@ -1,11 +1,14 @@
 # Changelog
 
-## Spotify Connect fixes (after V0.8)
+## V0.9 — NAS Music by Artist / Albums / Tracks
 
-- Idle Connect no longer looks “playing” (empty /status 204 was locking the UI)
-- go-librespot uses the Pulse backend, not ALSA device `pulse`
-- Finds the binary next to the UI if `/data/opt/spotify` is missing
-- Start failures write a log and show the last lines in Settings
+- NAS Music page: toggle **Artists**, **Albums**, and **Tracks**
+- Browse the share by folder (artist → album → tracks) instead of flattening the whole tree
+- Search filters the current view; letter jump on long artist lists
+- Connect no longer walks every file (that stalled FUSE on large shares)
+- Library and NAS Music stay on the current page when you tap a track; **Now Playing** is only for the visualizer
+- The Home page is renamed **Now Playing**
+- Spotify Connect: empty `/status` is idle (not “playing”); Pulse backend; log tail on failed start
 
 ## V0.8 — NAS SMB music folder
 

@@ -577,6 +577,186 @@
       line-height: 1.45;
       max-width: 46rem;
     }
+    .nas-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 0 0 14px;
+    }
+    .nas-toggle {
+      display: flex;
+      gap: 6px;
+      padding: 4px;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .nas-toggle .btn {
+      height: 36px;
+      padding: 0 14px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .nas-toggle .btn.on {
+      background: var(--gold);
+      color: var(--gold-text);
+    }
+    .nas-search {
+      flex: 1;
+      min-width: 180px;
+      max-width: 320px;
+      height: 40px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--bg-input);
+      color: var(--text);
+      padding: 0 14px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    .nas-search:focus {
+      border-color: rgba(226,179,64,0.55);
+      box-shadow: 0 0 0 3px var(--gold-dim);
+    }
+    .nas-crumbs {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .nas-crumbs button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 0;
+      font-weight: 600;
+    }
+    .nas-crumbs button:hover { color: var(--text); }
+    .nas-crumbs button.on { color: var(--gold); }
+    .nas-crumbs span { opacity: 0.45; }
+    .nas-az {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 0 0 14px;
+    }
+    .nas-az button {
+      min-width: 28px;
+      height: 28px;
+      padding: 0 6px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .nas-az button:hover { background: var(--bg-hover); color: var(--text); }
+    .nas-letter {
+      margin: 16px 0 8px;
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--gold);
+      font-weight: 700;
+    }
+    .nas-letter:first-child { margin-top: 0; }
+    .nas-tile {
+      display: grid;
+      grid-template-columns: 44px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+      background: var(--bg-elev);
+      color: inherit;
+      text-align: left;
+      width: 100%;
+    }
+    .nas-tile:hover { border-color: var(--line); background: var(--bg-hover); }
+    .nas-tile.on { border-color: rgba(226,179,64,0.35); background: var(--gold-dim); }
+    .nas-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: var(--gold-dim);
+      color: var(--gold);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -0.03em;
+    }
+    .nas-tile strong { display: block; font-size: 0.95rem; }
+    .nas-tile em {
+      color: var(--muted);
+      font-style: normal;
+      font-size: 0.78rem;
+    }
+    .nas-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+      gap: 10px;
+    }
+    .nas-album {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 16px;
+      border: 1px solid transparent;
+      background: var(--bg-elev);
+      color: inherit;
+      text-align: left;
+      min-width: 0;
+    }
+    .nas-album:hover { border-color: var(--line); background: var(--bg-hover); }
+    .nas-album.on { border-color: rgba(226,179,64,0.35); background: var(--gold-dim); }
+    .nas-cover {
+      aspect-ratio: 1;
+      border-radius: 12px;
+      background:
+        linear-gradient(180deg, rgba(226,179,64,0.22), rgba(226,179,64,0.05)),
+        var(--bg-hover);
+      color: var(--gold);
+      display: grid;
+      place-items: center;
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+    }
+    .nas-album strong {
+      display: block;
+      font-size: 0.92rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .nas-album em {
+      color: var(--muted);
+      font-style: normal;
+      font-size: 0.75rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .track .sub {
+      display: block;
+      color: var(--muted);
+      font-style: normal;
+      font-size: 0.78rem;
+      text-transform: none;
+      letter-spacing: 0;
+      margin-top: 2px;
+    }
 
     @media (max-width: 820px) {
       #app {
@@ -595,8 +775,13 @@
         border-top: 1px solid var(--line);
         padding: 8px 8px calc(8px + var(--safe-b));
       }
-      nav.side button { flex: 1; justify-content: center; height: 44px; font-size: 0.72rem; padding: 0 4px; }
+      nav.side button { flex: 1; justify-content: center; height: 44px; font-size: 0.72rem; padding: 0 4px; line-height: 1.15; white-space: normal; text-align: center; }
       main.view { padding: 20px 18px 16px; }
+      .nas-toolbar { flex-direction: column; align-items: stretch; }
+      .nas-toggle { width: 100%; }
+      .nas-toggle .btn { flex: 1; }
+      .nas-search { max-width: none; }
+      .nas-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .stage canvas { height: 240px; }
       footer.player {
         grid-template-columns: 1fr auto;
@@ -661,14 +846,14 @@
       </div>
     </header>
     <nav class="side" aria-label="App">
-      <button type="button" data-view="home" class="on">Home</button>
+      <button type="button" data-view="home" class="on">Now Playing</button>
       <button type="button" data-view="library">Library</button>
       <button type="button" data-view="nas" id="nav-nas" class="hidden">NAS Music</button>
       <button type="button" data-view="eq">EQ</button>
       <button type="button" data-view="settings">Settings</button>
     </nav>
     <main class="view" id="view-home">
-      <h2>Home</h2>
+      <h2>Now Playing</h2>
       <p class="quote"><em>Keep the file. Play it back. That is freedom of media.</em></p>
       <div class="stage">
         <canvas id="viz" aria-hidden="true"></canvas>
@@ -710,14 +895,26 @@
       <div class="lib-head">
         <h2>NAS Music</h2>
       </div>
-      <p class="lede" id="nas-lede">Music on the connected share. Tap a row to play it.</p>
+      <p class="lede" id="nas-lede">Music on the connected share. Browse by artist, album, or track.</p>
+      <div class="nas-toolbar">
+        <div class="nas-toggle" id="nas-toggle" role="tablist" aria-label="NAS library view">
+          <button class="btn on" type="button" data-nas-view="artists">Artists</button>
+          <button class="btn" type="button" data-nas-view="albums">Albums</button>
+          <button class="btn" type="button" data-nas-view="tracks">Tracks</button>
+        </div>
+        <input class="nas-search" id="nas-search" type="search" placeholder="Search this view" autocomplete="off" spellcheck="false">
+      </div>
+      <nav class="nas-crumbs" id="nas-crumbs" aria-label="Folder"></nav>
       <p class="lib-log" id="nas-log"></p>
+      <div id="nas-az" class="nas-az hidden"></div>
       <div id="nas-empty" class="empty">
         <h3>No audio on this share</h3>
         <p>Connect a NAS folder in Settings, or point the share at a folder with MP3, FLAC, or Opus.</p>
         <div class="formats"><span>MP3</span><span>FLAC</span><span>Opus</span></div>
       </div>
-      <div id="nas-track-list" class="tracks"></div>
+      <div id="nas-artist-list" class="tracks"></div>
+      <div id="nas-album-list" class="nas-grid hidden"></div>
+      <div id="nas-track-list" class="tracks hidden"></div>
     </main>
     <main class="view hidden" id="view-eq">
       <h2>EQ</h2>
@@ -734,7 +931,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.8</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.9</span></div>
         <h3 class="set-h">Internal</h3>
         <div class="row res-row">
           <div class="res-top"><div>Memory</div><span id="mem-left">—</span></div>
@@ -941,8 +1138,14 @@
       origin: "local",
       nasTracks: [],
       nasIndex: -1,
+      nasView: "artists",
+      nasPath: "",
+      nasQuery: "",
+      nasLoading: false,
+      nasCatalog: { artists: [], albums: [], tracks: [], crumbs: [], path: "", parent: "", error: "", capped: false },
       nas: { available: false, mounted: false, host: "", share: "", folder: "", username: "", domain: "", password_set: false, error: "", path: "" }
     };
+    let nasGen = 0;
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
     let eqNodes = [];
     let volTimer = null;
@@ -973,7 +1176,12 @@
         paintEq();
         ensureAudio();
       }
-      if (name === "nas") paintNasLibrary();
+      if (name === "nas") {
+        paintNasLibrary();
+        if (state.nas && state.nas.mounted && !state.nasCatalog.artists.length && !state.nasCatalog.albums.length && !state.nasCatalog.tracks.length && !state.nasLoading) {
+          loadNasBrowse(state.nasPath || "", { view: state.nasView || "artists" });
+        }
+      }
     }
 
     function fmtTime(sec) {
@@ -1037,6 +1245,33 @@
       if (track.bitrate) parts.push(track.bitrate);
       if (track.hz) parts.push(track.hz);
       return parts.filter(Boolean).join(" · ");
+    }
+
+    function formatNasLine(track) {
+      if (!track) return "";
+      const line = [track.artist, track.album].filter(Boolean).join(" · ");
+      return line || formatMeta(track);
+    }
+
+    function nasLetter(name) {
+      const ch = String(name || "").trim().charAt(0).toUpperCase();
+      return /[A-Z]/.test(ch) ? ch : "#";
+    }
+
+    function nasFilter(items, fields) {
+      const q = (state.nasQuery || "").trim().toLowerCase();
+      const list = items || [];
+      if (!q) return list;
+      return list.filter((item) => fields.some((key) => String(item[key] || "").toLowerCase().includes(q)));
+    }
+
+    function nasDepth(path) {
+      return String(path || "").split("/").filter(Boolean).length;
+    }
+
+    function nasArtistPath(path) {
+      const parts = String(path || "").split("/").filter(Boolean);
+      return parts[0] || "";
     }
 
     function setLibLog(text, isErr) {
@@ -1171,27 +1406,190 @@
 
     function paintNasLibrary() {
       const empty = document.getElementById("nas-empty");
-      const list = document.getElementById("nas-track-list");
+      const artistsEl = document.getElementById("nas-artist-list");
+      const albumsEl = document.getElementById("nas-album-list");
+      const tracksEl = document.getElementById("nas-track-list");
+      const az = document.getElementById("nas-az");
       const lede = document.getElementById("nas-lede");
-      const tracks = state.nasTracks || [];
-      empty.classList.toggle("hidden", tracks.length > 0);
+      const catalog = state.nasCatalog || {};
       const snap = state.nas || {};
-      lede.textContent = snap.path
-        ? ("Share " + snap.path + (snap.folder ? "/" + snap.folder : "") + ". Tap a row to play.")
-        : "Music on the connected share. Tap a row to play it.";
-      list.innerHTML = "";
+      const view = state.nasView || "artists";
+      const playing = state.origin === "nas" ? currentTrack() : null;
+      const artists = nasFilter(catalog.artists || [], ["name"]);
+      const albums = nasFilter(catalog.albums || [], ["name", "artist"]);
+      const tracks = nasFilter(catalog.tracks || [], ["title", "artist", "album", "name"]);
+      if (snap.path) {
+        lede.textContent = "Share " + snap.path + (snap.folder ? "/" + snap.folder : "") + ". Browse by artist, album, or track.";
+      } else {
+        lede.textContent = "Music on the connected share. Browse by artist, album, or track.";
+      }
+      document.querySelectorAll("#nas-toggle [data-nas-view]").forEach((btn) => {
+        btn.classList.toggle("on", btn.dataset.nasView === view);
+      });
+      paintNasCrumbs(catalog.crumbs || []);
+      artistsEl.innerHTML = "";
+      albumsEl.innerHTML = "";
+      tracksEl.innerHTML = "";
+      az.innerHTML = "";
+      artistsEl.classList.toggle("hidden", view !== "artists");
+      albumsEl.classList.toggle("hidden", view !== "albums");
+      tracksEl.classList.toggle("hidden", view !== "tracks");
+      let emptyTitle = "Nothing here yet";
+      let emptyCopy = "Connect a NAS folder in Settings, or point the share at a folder with MP3, FLAC, or Opus.";
+      let showEmpty = false;
+      if (state.nasLoading) {
+        showEmpty = true;
+        emptyTitle = "Reading the share";
+        emptyCopy = "Listing folders on the NAS. Large shares take a moment.";
+      } else if (view === "artists") {
+        showEmpty = artists.length === 0;
+        emptyTitle = (state.nasQuery ? "No matching artists" : "No artists on this share");
+        emptyCopy = state.nasQuery ? "Try a different search." : "Top-level folders on the share become artists.";
+        paintNasArtists(artistsEl, az, artists, playing);
+      } else if (view === "albums") {
+        showEmpty = albums.length === 0;
+        emptyTitle = state.nasQuery ? "No matching albums" : (nasDepth(state.nasPath) ? "No albums here" : "Pick an artist");
+        emptyCopy = state.nasQuery
+          ? "Try a different search."
+          : (nasDepth(state.nasPath) ? "This folder has no album folders." : "Open an artist, then switch to Albums.");
+        paintNasAlbums(albumsEl, albums, playing);
+      } else {
+        showEmpty = tracks.length === 0;
+        emptyTitle = state.nasQuery ? "No matching tracks" : (nasDepth(state.nasPath) ? "No tracks here" : "Pick an album");
+        emptyCopy = state.nasQuery
+          ? "Try a different search."
+          : (nasDepth(state.nasPath) ? "This folder has no MP3, FLAC, or Opus files." : "Open an artist or album, then switch to Tracks.");
+        paintNasTracks(tracksEl, tracks, playing);
+      }
+      az.classList.toggle("hidden", view !== "artists" || artists.length < 18);
+      empty.classList.toggle("hidden", !showEmpty);
+      if (showEmpty) {
+        empty.querySelector("h3").textContent = emptyTitle;
+        empty.querySelector("p").textContent = emptyCopy;
+      }
+    }
+
+    function paintNasCrumbs(crumbs) {
+      const el = document.getElementById("nas-crumbs");
+      el.innerHTML = "";
+      const list = crumbs && crumbs.length ? crumbs : [{ label: "NAS", path: "" }];
+      list.forEach((crumb, i) => {
+        if (i) {
+          const sep = document.createElement("span");
+          sep.textContent = "/";
+          el.appendChild(sep);
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = crumb.label || "NAS";
+        btn.className = i === list.length - 1 ? "on" : "";
+        btn.onclick = () => {
+          const depth = nasDepth(crumb.path);
+          const view = depth === 0 ? "artists" : (depth === 1 ? "albums" : "tracks");
+          loadNasBrowse(crumb.path || "", { view });
+        };
+        el.appendChild(btn);
+      });
+    }
+
+    function paintNasArtists(list, az, artists, playing) {
+      const letters = [];
+      let last = "";
+      artists.forEach((artist) => {
+        const letter = nasLetter(artist.name);
+        if (letter !== last) {
+          last = letter;
+          const head = document.createElement("div");
+          head.className = "nas-letter";
+          head.id = "nas-letter-" + letter;
+          head.textContent = letter;
+          list.appendChild(head);
+          letters.push(letter);
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const currentArtist = playing && playing.artist === artist.name;
+        btn.className = "nas-tile" + (currentArtist ? " on" : "");
+        const mark = document.createElement("span");
+        mark.className = "nas-avatar";
+        mark.textContent = nasLetter(artist.name);
+        const info = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = artist.name;
+        const meta = document.createElement("em");
+        meta.textContent = "Artist";
+        info.appendChild(title);
+        info.appendChild(meta);
+        btn.appendChild(mark);
+        btn.appendChild(info);
+        btn.onclick = () => loadNasBrowse(artist.path, { view: "albums" });
+        list.appendChild(btn);
+      });
+      letters.forEach((letter) => {
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.textContent = letter;
+        jump.onclick = () => {
+          const target = document.getElementById("nas-letter-" + letter);
+          if (target) target.scrollIntoView({ block: "start", behavior: "smooth" });
+        };
+        az.appendChild(jump);
+      });
+    }
+
+    function paintNasAlbums(list, albums, playing) {
+      albums.forEach((album) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const current = playing && playing.album === album.name && (!album.artist || playing.artist === album.artist);
+        btn.className = "nas-album" + (current ? " on" : "");
+        const cover = document.createElement("div");
+        cover.className = "nas-cover";
+        cover.textContent = nasLetter(album.name);
+        const title = document.createElement("strong");
+        title.textContent = album.name;
+        const meta = document.createElement("em");
+        meta.textContent = album.artist || "Album";
+        btn.appendChild(cover);
+        btn.appendChild(title);
+        btn.appendChild(meta);
+        btn.onclick = () => loadNasBrowse(album.path, { view: "tracks" });
+        list.appendChild(btn);
+      });
+    }
+
+    function paintNasTracks(list, tracks, playing) {
       tracks.forEach((track, i) => {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "track" + (state.origin === "nas" && i === state.nasIndex ? " on" : "");
-        btn.innerHTML = "<span class=\"n\">" + String(i + 1).padStart(2, "0") + "</span><span><strong></strong><em></em></span><em></em>";
-        btn.querySelector("strong").textContent = track.title;
-        const ems = btn.querySelectorAll("em");
-        ems[0].textContent = (track.name.split("/").slice(0, -1).join(" / ")) || "NAS";
-        ems[1].textContent = formatMeta(track);
-        btn.onclick = () => playIndex(i, 0, "nas");
+        const on = playing && playing.name === track.name;
+        btn.className = "track" + (on ? " on" : "");
+        const num = document.createElement("span");
+        num.className = "n";
+        num.textContent = String(i + 1).padStart(2, "0");
+        const info = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = track.title || track.name;
+        const sub = document.createElement("em");
+        sub.className = "sub";
+        sub.textContent = formatNasLine(track);
+        info.appendChild(title);
+        info.appendChild(sub);
+        const ext = document.createElement("em");
+        ext.textContent = formatMeta(track);
+        btn.appendChild(num);
+        btn.appendChild(info);
+        btn.appendChild(ext);
+        btn.onclick = () => playNasCatalog(track);
         list.appendChild(btn);
       });
+    }
+
+    function playNasCatalog(track) {
+      const queue = (state.nasCatalog && state.nasCatalog.tracks) || [];
+      const idx = queue.findIndex((item) => item.name === track.name);
+      state.nasTracks = queue.length ? queue : [track];
+      playIndex(idx >= 0 ? idx : 0, 0, "nas");
     }
 
     function setNasLog(text, isErr) {
@@ -1236,18 +1634,25 @@
       paintNasNav();
     }
 
-    function applyNas(snap, tracks) {
+    function applyNas(snap, tracks, catalog) {
+      const wasMounted = !!(state.nas && state.nas.mounted);
       state.nas = snap || state.nas;
       if (tracks) state.nasTracks = tracks;
-      if (!(state.nas && state.nas.mounted)) {
+      if (catalog) state.nasCatalog = catalog;
+      const mounted = !!(state.nas && state.nas.mounted);
+      if (!mounted) {
         state.nasTracks = [];
+        state.nasCatalog = { artists: [], albums: [], tracks: [], crumbs: [], path: "", parent: "", error: "", capped: false };
+        state.nasPath = "";
+        state.nasQuery = "";
+        state.nasLoading = false;
         if (state.origin === "nas") {
           state.origin = "local";
           state.nasIndex = -1;
         }
       }
       paintNasSettings();
-      paintNasLibrary();
+      if (catalog || tracks !== undefined || wasMounted !== mounted) paintNasLibrary();
       paintNow({ skipLib: true });
     }
 
@@ -1342,10 +1747,8 @@
 
     function applyCast(key, snap, paint) {
       const next = snap || { available: false, enabled: false, active: false };
-      const became = !!(next.active && !(state[key] && state[key].active));
       state[key] = next;
       if (next.active) stopLocalPlayback();
-      if (became) showView("home");
       if (paint) paint();
       paintNow({ skipLib: true });
     }
@@ -1396,9 +1799,9 @@
       const host = state.host || {};
       const opticalLive = state.output === "optical" && (host.playing || host.paused);
       let title = track ? track.title : "Nothing playing";
-      let sub = track ? formatMeta(track) : routeLabel();
+      let sub = track ? (state.origin === "nas" ? (formatNasLine(track) || formatMeta(track)) : formatMeta(track)) : routeLabel();
       let kicker = state.playing ? "Now playing" : (track ? "Paused" : "Standby");
-      let homeSub = track ? formatMeta(track) : "Open Library and tap a track";
+      let homeSub = track ? sub : "Open Library and tap a track";
       if (cast) {
         title = cast.title || cast.kicker;
         sub = [cast.artist, cast.album].filter(Boolean).join(" · ") || (cast.kicker + " · TOSLINK");
@@ -1423,8 +1826,10 @@
       document.getElementById("btn-play").disabled = !!cast || !track;
       document.getElementById("btn-prev").disabled = !!cast || list.length < 2;
       document.getElementById("btn-next").disabled = !!cast || list.length < 2;
-      if (!(opts && opts.skipLib)) paintLibrary();
-      if (state.nas && state.nas.mounted) paintNasLibrary();
+      if (!(opts && opts.skipLib)) {
+        paintLibrary();
+        if (state.nas && state.nas.mounted) paintNasLibrary();
+      }
     }
 
     function fmtGain(n) {
@@ -1593,7 +1998,6 @@
           stopLocalPlayback();
           if (data.host) state.host = data.host;
           paintNow({ skipLib: false });
-          showView("home");
         } catch (e) {
           setLibLog(e.message || "could not play on TOSLINK", true);
         }
@@ -1608,7 +2012,6 @@
         deck.addEventListener("loadedmetadata", jump);
       }
       paintNow();
-      showView("home");
     }
 
     async function togglePlay() {
@@ -1756,7 +2159,7 @@
       applyCast("dlna", status.dlna || {}, paintDlnaSettings);
       applyCast("spotify", status.spotify || {}, paintSpotifySettings);
       applyNas(status.nas || {});
-      if (status.nas && status.nas.mounted) loadNasLibrary();
+      if (status.nas && status.nas.mounted) loadNasBrowse("", { view: "artists" });
       paintOutputSettings();
       startAirplayPoll();
       resize();
@@ -1908,15 +2311,66 @@
       catch (e) { document.getElementById("spotify-note").textContent = e.message || "could not disable Spotify"; }
     };
 
-    async function loadNasLibrary() {
+    async function loadNasBrowse(path, opts) {
+      if (!(state.nas && state.nas.mounted)) return;
+      const view = (opts && opts.view) || state.nasView || "artists";
+      state.nasView = view;
+      state.nasPath = path || "";
+      const gen = ++nasGen;
+      state.nasLoading = true;
+      paintNasLibrary();
+      const deep = view === "tracks" && nasDepth(state.nasPath) === 1 ? "&deep=1" : "";
       try {
-        const data = await api("/api/nas/library");
-        applyNas(data.nas, data.tracks || []);
-        const n = (data.tracks || []).length;
-        setNasLog(n ? (n + " track" + (n === 1 ? "" : "s") + " on the share") : "No audio files on this share");
+        const data = await api("/api/nas/browse?path=" + encodeURIComponent(state.nasPath) + deep);
+        if (gen !== nasGen) return;
+        const catalog = {
+          artists: data.artists || [],
+          albums: data.albums || [],
+          tracks: data.tracks || [],
+          crumbs: data.crumbs || [],
+          path: data.path || "",
+          parent: data.parent || "",
+          error: data.error || "",
+          capped: !!data.capped
+        };
+        if (view === "albums" && !catalog.albums.length && catalog.tracks.length && nasDepth(state.nasPath) === 1) {
+          state.nasView = "tracks";
+        }
+        state.nasLoading = false;
+        applyNas(data.nas, undefined, catalog);
+        if (catalog.error) {
+          setNasLog(catalog.error, true);
+          return;
+        }
+        const bits = [];
+        if (state.nasView === "artists") bits.push(catalog.artists.length + " artist" + (catalog.artists.length === 1 ? "" : "s"));
+        else if (state.nasView === "albums") bits.push(catalog.albums.length + " album" + (catalog.albums.length === 1 ? "" : "s"));
+        else bits.push(catalog.tracks.length + " track" + (catalog.tracks.length === 1 ? "" : "s"));
+        if (catalog.capped) bits.push("showing first " + catalog.tracks.length);
+        setNasLog(bits.join(" · "));
       } catch (e) {
+        if (gen !== nasGen) return;
+        state.nasLoading = false;
+        paintNasLibrary();
         setNasLog(e.message || "could not read NAS library", true);
       }
+    }
+
+    function setNasView(view) {
+      const search = document.getElementById("nas-search");
+      if (search && state.nasQuery) {
+        state.nasQuery = "";
+        search.value = "";
+      }
+      if (view === state.nasView && !state.nasLoading) {
+        paintNasLibrary();
+        return;
+      }
+      let path = state.nasPath || "";
+      if (view === "artists") path = "";
+      else if (view === "albums") path = nasArtistPath(path);
+      else if (view === "tracks" && nasDepth(path) === 0) path = state.nasPath || "";
+      loadNasBrowse(path, { view });
     }
 
     function nasFormPayload(extra) {
@@ -1939,10 +2393,11 @@
       try {
         const data = await api("/api/nas", { method: "POST", body: JSON.stringify(nasFormPayload({ enabled: true })) });
         document.getElementById("nas-pass").value = "";
-        applyNas(data, data.tracks || []);
+        applyNas(data);
         if (data.mounted) {
-          setNasLog(((data.tracks || []).length) + " tracks on the share");
+          state.nasLoading = true;
           showView("nas");
+          loadNasBrowse("", { view: "artists" });
         }
       } catch (e) {
         document.getElementById("nas-note").textContent = e.message || "could not connect";
@@ -1951,12 +2406,20 @@
     };
     document.getElementById("nas-off").onclick = async () => {
       try {
-        applyNas(await api("/api/nas", { method: "POST", body: JSON.stringify({ enabled: false }) }), []);
+        applyNas(await api("/api/nas", { method: "POST", body: JSON.stringify({ enabled: false }) }));
         setNasLog("");
       } catch (e) {
         document.getElementById("nas-note").textContent = e.message || "could not disconnect";
       }
     };
+
+    document.querySelectorAll("#nas-toggle [data-nas-view]").forEach((btn) => {
+      btn.onclick = () => setNasView(btn.dataset.nasView);
+    });
+    document.getElementById("nas-search").addEventListener("input", (ev) => {
+      state.nasQuery = ev.target.value || "";
+      paintNasLibrary();
+    });
 
     document.getElementById("btn-logout").onclick = async () => {
       try { deck.pause(); } catch (_e) {}

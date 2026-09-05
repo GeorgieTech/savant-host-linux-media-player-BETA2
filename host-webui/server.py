@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.8 — library, NAS SMB, browser or TOSLINK, AirPlay, DLNA, Spotify."""
+"""Gigawatt V0.9 — library, NAS browse, browser or TOSLINK, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -29,7 +29,7 @@ STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
-VERSION = "0.8"
+VERSION = "0.9"
 OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 SPOTIFY_DIR = os.environ.get("SPOTIFY_DIR", "/data/opt/spotify")
@@ -55,6 +55,22 @@ SESSION_TTL = 30 * 24 * 3600
 PBKDF2_ROUNDS = 80000
 USER_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
 AUDIO_EXTS = {".mp3", ".flac", ".opus", ".ogg", ".wav", ".m4a", ".aac"}
+NAS_SKIP = {
+    "@eadir",
+    "#recycle",
+    "#snapshot",
+    "thumbs.db",
+    "desktop.ini",
+    ".ds_store",
+    "albumart.jpg",
+    "albumart.png",
+    "folder.jpg",
+    "folder.png",
+    "cover.jpg",
+    "cover.png",
+}
+NAS_UNKNOWN_ALBUM = {"unknownalbum", "unknown album", "unknown", "untitled"}
+DISC_RE = re.compile(r"^(cd|disc|disk|dvd)\s*\d+$", re.I)
 MIME = {
     ".mp3": "audio/mpeg",
     ".flac": "audio/flac",
@@ -423,8 +439,213 @@ def unique_dest(name):
 def pretty_title(name):
     base = os.path.splitext(os.path.basename(name))[0]
     base = base.replace("\uff5c", "—").replace("|", "—")
-    base = re.sub(r"^\d+\.\s*", "", base)
+    prev = None
+    while prev != base:
+        prev = base
+        base = re.sub(r"^\d{1,3}\s*[-.)]\s*", "", base)
     return re.sub(r"\s+", " ", base).strip() or name
+
+
+def _nas_skip(name):
+    if not name or name in (".", "..") or name.startswith("."):
+        return True
+    return name.lower() in NAS_SKIP
+
+
+def _nas_rel_ok(rel):
+    rel = unquote(rel or "").replace("\\", "/").strip("/")
+    if not rel:
+        return ""
+    if rel in (".", "..") or ".." in rel.split("/"):
+        return None
+    return rel
+
+
+def nas_abs(rel):
+    rel = _nas_rel_ok(rel)
+    if rel is None:
+        return None
+    root = os.path.realpath(NAS_DIR)
+    full = os.path.realpath(os.path.join(NAS_DIR, rel)) if rel else root
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    return full
+
+
+def parse_nas_meta(rel):
+    parts = [p for p in (rel or "").replace("\\", "/").split("/") if p]
+    if not parts:
+        return "", "", ""
+    title = pretty_title(parts[-1])
+    folders = parts[:-1]
+    while folders and DISC_RE.match(folders[-1]):
+        folders.pop()
+    artist = folders[0] if folders else ""
+    album = folders[1] if len(folders) > 1 else ""
+    if album and album.lower() in NAS_UNKNOWN_ALBUM:
+        album = "Unknown album"
+    return artist, album, title
+
+
+def _album_label(name):
+    if name and name.lower() in NAS_UNKNOWN_ALBUM:
+        return "Unknown album"
+    return name
+
+
+def empty_nas_catalog(rel=""):
+    rel = rel or ""
+    crumbs = [{"label": "NAS", "path": ""}]
+    acc = []
+    for part in [p for p in rel.split("/") if p]:
+        acc.append(part)
+        crumbs.append({"label": _album_label(part), "path": "/".join(acc)})
+    parent = "/".join(acc[:-1]) if acc else ""
+    return {
+        "path": rel,
+        "parent": parent,
+        "crumbs": crumbs,
+        "artists": [],
+        "albums": [],
+        "tracks": [],
+        "error": "",
+        "capped": False,
+    }
+
+
+def _nas_track(rel):
+    artist, album, title = parse_nas_meta(rel)
+    ext = os.path.splitext(rel)[1].lower()
+    return {
+        "name": rel,
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "ext": ext.lstrip("."),
+        "origin": "nas",
+    }
+
+
+def _scandir_nas(rel):
+    full = nas_abs(rel)
+    dirs = []
+    files = []
+    if not full or not os.path.isdir(full):
+        return dirs, files, "folder not found"
+    try:
+        with os.scandir(full) as it:
+            for entry in it:
+                name = entry.name
+                if _nas_skip(name):
+                    continue
+                child = (rel + "/" + name) if rel else name
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                    is_file = entry.is_file(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_dir:
+                    dirs.append((name, child))
+                elif is_file:
+                    files.append((name, child))
+    except OSError as exc:
+        return [], [], str(exc)
+    dirs.sort(key=lambda item: item[0].lower())
+    files.sort(key=lambda item: item[0].lower())
+    return dirs, files, ""
+
+
+def list_nas_tracks(rel="", cap=None):
+    cap = NAS_TRACK_CAP if cap is None else cap
+    rel = _nas_rel_ok(rel)
+    if rel is None:
+        return [], False
+    full = nas_abs(rel)
+    tracks = []
+    if not full or not os.path.isdir(full):
+        return tracks, False
+    root = os.path.realpath(NAS_DIR)
+    capped = False
+    try:
+        for dirpath, dirnames, filenames in os.walk(full):
+            dirnames[:] = [name for name in dirnames if not _nas_skip(name)]
+            dirnames.sort(key=lambda name: name.lower())
+            filenames.sort(key=lambda name: name.lower())
+            for filename in filenames:
+                if _nas_skip(filename):
+                    continue
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in AUDIO_EXTS:
+                    continue
+                child = os.path.relpath(os.path.join(dirpath, filename), root).replace("\\", "/")
+                tracks.append(_nas_track(child))
+                if len(tracks) >= cap:
+                    capped = True
+                    break
+            if capped:
+                break
+    except OSError:
+        pass
+    return tracks, capped
+
+
+def browse_nas(rel="", deep=False):
+    rel = _nas_rel_ok(rel)
+    if rel is None:
+        catalog = empty_nas_catalog("")
+        catalog["error"] = "path is not valid"
+        return catalog
+    catalog = empty_nas_catalog(rel)
+    if not os.path.isdir(NAS_DIR):
+        catalog["error"] = "NAS is not mounted"
+        return catalog
+    dirs, files, err = _scandir_nas(rel)
+    if err:
+        catalog["error"] = err
+        return catalog
+    parts = [p for p in rel.split("/") if p]
+    depth = len(parts)
+    disc_dirs = [(name, child) for name, child in dirs if DISC_RE.match(name)]
+    other_dirs = [(name, child) for name, child in dirs if not DISC_RE.match(name)]
+    if depth == 0:
+        catalog["artists"] = [{"name": name, "path": child} for name, child in dirs]
+    elif depth >= 2 and disc_dirs and not other_dirs:
+        extra = []
+        for _name, child in disc_dirs:
+            more, _capped = list_nas_tracks(child, cap=NAS_TRACK_CAP - len(extra))
+            extra.extend(more)
+            if len(extra) >= NAS_TRACK_CAP:
+                catalog["capped"] = True
+                break
+        catalog["tracks"].extend(extra)
+    else:
+        artist_name = parts[0] if parts else ""
+        catalog["albums"] = [
+            {"name": _album_label(name), "path": child, "artist": artist_name}
+            for name, child in dirs
+        ]
+    for name, child in files:
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in AUDIO_EXTS:
+            continue
+        catalog["tracks"].append(_nas_track(child))
+        if len(catalog["tracks"]) >= NAS_TRACK_CAP:
+            catalog["capped"] = True
+            break
+    if deep and not catalog["capped"] and depth == 1:
+        nested, capped = list_nas_tracks(rel)
+        seen = {track["name"] for track in catalog["tracks"]}
+        for track in nested:
+            if track["name"] in seen:
+                continue
+            catalog["tracks"].append(track)
+            seen.add(track["name"])
+            if len(catalog["tracks"]) >= NAS_TRACK_CAP:
+                capped = True
+                break
+        catalog["capped"] = catalog["capped"] or capped
+        catalog["tracks"].sort(key=lambda track: ((track.get("album") or "").lower(), (track.get("name") or "").lower()))
+    return catalog
 
 
 def fmt_hz(value):
@@ -526,10 +747,13 @@ def list_tracks(root=None, probe=True, origin="local"):
                 info = probe_audio(full, size, mtime)
             else:
                 info = {"sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""}
+            artist, album, title = parse_nas_meta(rel) if origin == "nas" else ("", "", pretty_title(rel))
             tracks.append(
                 {
                     "name": rel,
-                    "title": pretty_title(rel),
+                    "title": title,
+                    "artist": artist,
+                    "album": album,
                     "ext": ext.lstrip("."),
                     "bytes": size,
                     "sample_rate": info["sample_rate"],
@@ -876,12 +1100,17 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self._json(200, {"ok": True, "tracks": list_tracks(), "genres": list(GENRES)})
             return
-        if path == "/api/nas/library":
+        if path in ("/api/nas/library", "/api/nas/browse"):
             if not self._need_user():
                 return
             snap = nas_snapshot()
-            tracks = list_tracks(NAS_DIR, probe=False, origin="nas") if snap.get("mounted") else []
-            self._json(200, {"ok": True, "nas": snap, "tracks": tracks})
+            qs = parse_qs(parsed.query)
+            rel = (qs.get("path") or [""])[0]
+            deep = (qs.get("deep") or [""])[0].lower() in ("1", "true", "yes")
+            catalog = browse_nas(rel, deep=deep) if snap.get("mounted") else empty_nas_catalog(rel)
+            payload = {"ok": True, "nas": snap}
+            payload.update(catalog)
+            self._json(200, payload)
             return
         if path == "/api/media":
             if not self._current_user():
@@ -1149,8 +1378,6 @@ class Handler(SimpleHTTPRequestHandler):
                 ok = NAS.connect()
                 snap = nas_snapshot()
                 snap["ok"] = ok
-                if ok:
-                    snap["tracks"] = list_tracks(NAS_DIR, probe=False, origin="nas")
                 self._json(200 if ok else 409, snap)
                 return
             if want is False:
@@ -1291,7 +1518,10 @@ def main():
     )
     if player.get("spotify"):
         SPOTIFY.set_enabled(True)
-    os.makedirs(NAS_DIR, exist_ok=True)
+    try:
+        os.makedirs(NAS_DIR, exist_ok=True)
+    except OSError:
+        pass
     NAS = NasShare(NAS_BIN, NAS_DIR, STATE_DIR)
     if NAS.cfg.get("enabled"):
         NAS.connect()

@@ -8,4 +8,7 @@ mkdir -p "$CONF"
 if [ -z "$PULSE_COOKIE" ] && [ -f "$HOME/.config/pulse/cookie" ]; then
   export PULSE_COOKIE="$HOME/.config/pulse/cookie"
 fi
-exec "$DIR/go-librespot" -config_dir "$CONF" "$@"
+# Stale lockfile from a previous crash blocks start.
+rm -f "$CONF/lockfile"
+# v0.9 binary treats -config_dir as -c (conf override). Long flag is required.
+exec "$DIR/go-librespot" --config_dir "$CONF" "$@"
