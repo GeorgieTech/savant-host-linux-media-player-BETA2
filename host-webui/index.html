@@ -487,6 +487,25 @@
       color: var(--muted);
     }
     .eq-actions { display: flex; gap: 8px; margin-top: 16px; }
+    .eq-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 10px;
+    }
+    .eq-presets .btn { height: 40px; padding: 0 14px; }
+    .eq-presets .btn.on {
+      background: var(--gold);
+      color: var(--gold-text);
+      border-color: var(--gold);
+    }
+    .eq-note {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1.45;
+      max-width: 46rem;
+    }
 
     @media (max-width: 820px) {
       #app {
@@ -608,11 +627,10 @@
     </main>
     <main class="view hidden" id="view-eq">
       <h2>EQ</h2>
-      <p class="lede">Ten-band equalizer for playback in this browser. Move a band, then keep playing.</p>
+      <p class="lede">Ten-band equalizer for this browser. Pick a published in-room target, or drag a band.</p>
+      <div class="eq-presets" id="eq-presets"></div>
+      <p class="eq-note" id="eq-note"></p>
       <div class="eq-board" id="eq-board"></div>
-      <div class="eq-actions">
-        <button class="btn ghost" id="btn-eq-flat" type="button">Flat</button>
-      </div>
     </main>
     <main class="view hidden" id="view-settings">
       <h2>Settings</h2>
@@ -670,6 +688,38 @@
       { freq: 8000, label: "8k", type: "peaking" },
       { freq: 16000, label: "16k", type: "highshelf" }
     ];
+    const EQ_PRESETS = [
+      {
+        id: "flat",
+        name: "Flat",
+        blurb: "No boost or cut. A level starting point.",
+        gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      },
+      {
+        id: "harman",
+        name: "Harman",
+        blurb: "Harman loudspeaker target (Olive 2013 in-room preference): bass shelf below ~100 Hz, then a gentle downward tilt through the treble. 10-band fit, 1 kHz at 0 dB.",
+        gains: [6.5, 6.0, 4.0, 1.5, 0.5, 0, -0.5, -2.5, -4.0, -6.0]
+      },
+      {
+        id: "bk1974",
+        name: "B&K 1974",
+        blurb: "Brüel & Kjær 1974 hi-fi room curve: fairly level bass into the lower mids, then a slow roll-off toward the top. 10-band fit, 1 kHz at 0 dB.",
+        gains: [2.0, 2.0, 1.8, 1.0, 0.5, 0, -0.8, -1.6, -2.5, -4.0]
+      },
+      {
+        id: "hifi",
+        name: "Optimum HiFi",
+        blurb: "Classic “optimum hi-fi” house curve: mild bass lift, a presence dip around 2–4 kHz, and easier treble. 10-band fit, 1 kHz at 0 dB.",
+        gains: [3.0, 2.5, 1.5, 0.5, 0.2, 0, -1.5, -2.0, -1.0, -2.5]
+      },
+      {
+        id: "nad",
+        name: "NAD / Bluesound",
+        blurb: "NAD / Bluesound house target: punch around 30–60 Hz, less deep rumble than a full bass shelf, warmer and steeper highs than Harman. 10-band fit, 1 kHz at 0 dB.",
+        gains: [5.5, 4.0, 2.5, 1.0, 0.3, 0, -1.2, -3.0, -5.0, -7.5]
+      }
+    ];
     const state = {
       tracks: [],
       genres: [],
@@ -680,6 +730,7 @@
       edit: { genres: {}, remove: {} },
       volume: 80,
       eq: EQ_BANDS.map(() => 0),
+      eqPreset: "flat",
       bins: new Float32Array(48)
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
@@ -907,6 +958,45 @@
       }, 40);
     }
 
+    function matchEqPreset(gains) {
+      for (let p = 0; p < EQ_PRESETS.length; p++) {
+        const preset = EQ_PRESETS[p];
+        let ok = true;
+        for (let i = 0; i < EQ_BANDS.length; i++) {
+          if (Math.abs((gains[i] || 0) - preset.gains[i]) > 0.35) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) return preset.id;
+      }
+      return "";
+    }
+
+    function paintEqPresets() {
+      const wrap = document.getElementById("eq-presets");
+      const note = document.getElementById("eq-note");
+      if (wrap.dataset.ready !== "1") {
+        wrap.innerHTML = "";
+        EQ_PRESETS.forEach((preset) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "btn ghost";
+          btn.dataset.preset = preset.id;
+          btn.textContent = preset.name;
+          btn.title = preset.blurb;
+          btn.onclick = () => applyEqGains(preset.gains, true);
+          wrap.appendChild(btn);
+        });
+        wrap.dataset.ready = "1";
+      }
+      const id = matchEqPreset(state.eq);
+      state.eqPreset = id;
+      wrap.querySelectorAll("button").forEach((btn) => btn.classList.toggle("on", btn.dataset.preset === id));
+      const preset = EQ_PRESETS.filter((p) => p.id === id)[0];
+      note.textContent = preset ? preset.blurb : "Custom — a band was moved off the selected curve.";
+    }
+
     function applyEqGains(gains, persist) {
       const next = EQ_BANDS.map((_, i) => {
         const v = Number(gains && gains[i]);
@@ -922,6 +1012,7 @@
         const gainEl = el.closest(".eq-band") && el.closest(".eq-band").querySelector(".gain");
         if (gainEl) gainEl.textContent = fmtGain(next[i]);
       });
+      paintEqPresets();
       if (!persist) return;
       if (eqTimer) clearTimeout(eqTimer);
       eqTimer = setTimeout(() => {
@@ -1051,9 +1142,6 @@
     };
     document.getElementById("vol").oninput = (ev) => applyVolume(ev.target.value, true);
     document.getElementById("vol").onchange = (ev) => applyVolume(ev.target.value, true);
-    document.getElementById("btn-eq-flat").onclick = () => {
-      applyEqGains(EQ_BANDS.map(() => 0), true);
-    };
 
     function resize() {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);

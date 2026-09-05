@@ -4,6 +4,7 @@
 
 - Bottom player: Volume slider (0–100), same type as Beta1
 - New **EQ** page: 10-band equalizer for this-browser playback
+- EQ presets: Flat, Harman loudspeaker, B&K 1974, Optimum HiFi, NAD / Bluesound
 - Volume and EQ persist on the host
 
 ## V0.3 — library manage + upload
