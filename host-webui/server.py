@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.2 — local accounts, library, browser playback."""
+"""Gigawatt V0.3 — local accounts, library, browser playback, manage + upload."""
+import cgi
 import hashlib
 import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -19,8 +21,22 @@ PORT = int(os.environ.get("WEBUI_PORT", "80"))
 MUSIC_DIR = os.environ.get("MUSIC_DIR", "/data/music")
 STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
-VERSION = "0.2"
+LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
+VERSION = "0.3"
+MAX_UPLOAD = 90 * 1024 * 1024
 COOKIE = "gigawatt_session"
+GENRES = [
+    "Pop",
+    "Rock",
+    "Hip-Hop",
+    "R&B",
+    "Electronic",
+    "Jazz",
+    "Classical",
+    "Metal",
+    "Country",
+    "Soundtrack",
+]
 SESSION_TTL = 30 * 24 * 3600
 PBKDF2_ROUNDS = 80000
 USER_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
@@ -127,6 +143,48 @@ def host_snapshot():
     return {"hostname": hostname, "ip": ip}
 
 
+def load_tags():
+    try:
+        with open(LIBRARY_FILE, "r") as fh:
+            data = json.load(fh)
+        tags = data.get("tags") if isinstance(data, dict) else None
+        return tags if isinstance(tags, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_tags(tags):
+    ensure_dirs()
+    tmp = LIBRARY_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump({"tags": tags}, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, LIBRARY_FILE)
+
+
+def safe_music_name(name):
+    name = os.path.basename((name or "").replace("\\", "/").strip())
+    if not name or name in (".", "..") or ".." in name:
+        return None
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in AUDIO_EXTS:
+        return None
+    return name
+
+
+def unique_dest(name):
+    dest = os.path.join(MUSIC_DIR, name)
+    if not os.path.exists(dest):
+        return dest
+    base, ext = os.path.splitext(name)
+    n = 2
+    while True:
+        cand = os.path.join(MUSIC_DIR, "%s %d%s" % (base, n, ext))
+        if not os.path.exists(cand):
+            return cand
+        n += 1
+
+
 def pretty_title(name):
     base = os.path.splitext(os.path.basename(name))[0]
     base = base.replace("\uff5c", "—").replace("|", "—")
@@ -209,6 +267,7 @@ def list_tracks():
     tracks = []
     if not os.path.isdir(root):
         return tracks
+    tags = load_tags()
     for dirpath, _dirnames, filenames in os.walk(root):
         for filename in filenames:
             ext = os.path.splitext(filename)[1].lower()
@@ -240,6 +299,7 @@ def list_tracks():
                     "bit_rate": probe["bit_rate"],
                     "hz": probe["hz"],
                     "bitrate": probe["bitrate"],
+                    "genre": tags.get(rel) or "",
                 }
             )
     tracks.sort(key=lambda t: t["title"].lower())
@@ -307,6 +367,102 @@ def send_media(handler, full, head=False):
                 break
             handler.wfile.write(chunk)
             left -= len(chunk)
+
+
+def set_genre(name, genre):
+    full = safe_media_path(name)
+    if not full:
+        return False, "not found"
+    genre = (genre or "").strip()
+    if genre and genre not in GENRES:
+        return False, "unknown genre"
+    rel = os.path.relpath(full, os.path.realpath(MUSIC_DIR)).replace("\\", "/")
+    with LOCK:
+        tags = load_tags()
+        if genre:
+            tags[rel] = genre
+        else:
+            tags.pop(rel, None)
+        try:
+            save_tags(tags)
+        except Exception as exc:
+            return False, str(exc)
+    return True, ""
+
+
+def delete_track(name):
+    full = safe_media_path(name)
+    if not full:
+        return False, "not found"
+    rel = os.path.relpath(full, os.path.realpath(MUSIC_DIR)).replace("\\", "/")
+    try:
+        os.remove(full)
+    except OSError as exc:
+        return False, str(exc)
+    with LOCK:
+        tags = load_tags()
+        if rel in tags:
+            tags.pop(rel, None)
+            try:
+                save_tags(tags)
+            except Exception:
+                pass
+    return True, ""
+
+
+def save_uploads(handler):
+    length = int(handler.headers.get("Content-Length") or 0)
+    if length > MAX_UPLOAD * 8:
+        return None, "upload too large"
+    form = cgi.FieldStorage(
+        fp=handler.rfile,
+        headers=handler.headers,
+        environ={
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": handler.headers.get("Content-Type", ""),
+            "CONTENT_LENGTH": str(length),
+        },
+        keep_blank_values=True,
+    )
+    if "file" not in form:
+        return None, "no file field"
+    raw = form["file"]
+    items = raw if isinstance(raw, list) else [raw]
+    saved = []
+    errors = []
+    os.makedirs(MUSIC_DIR, exist_ok=True)
+    for item in items:
+        filename = getattr(item, "filename", None)
+        if not filename:
+            continue
+        name = safe_music_name(filename)
+        if not name:
+            errors.append("rejected %s" % os.path.basename(filename))
+            continue
+        dest = unique_dest(name)
+        tmp = dest + ".part"
+        try:
+            with open(tmp, "wb") as out:
+                shutil.copyfileobj(item.file, out)
+                size = out.tell()
+            if size == 0:
+                os.remove(tmp)
+                errors.append("%s empty" % name)
+                continue
+            if size > MAX_UPLOAD:
+                os.remove(tmp)
+                errors.append("%s exceeds 90 MB" % name)
+                continue
+            os.replace(tmp, dest)
+            saved.append({"name": os.path.basename(dest), "bytes": size})
+        except Exception as exc:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+            errors.append("%s: %s" % (name, exc))
+    return {"saved": saved, "errors": errors}, None
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -392,13 +548,14 @@ class Handler(SimpleHTTPRequestHandler):
                     "playback": True,
                     "output": "browser",
                     "tracks": tracks,
+                    "genres": list(GENRES),
                 },
             )
             return
         if path == "/api/library":
             if not self._need_user():
                 return
-            self._json(200, {"ok": True, "tracks": list_tracks()})
+            self._json(200, {"ok": True, "tracks": list_tracks(), "genres": list(GENRES)})
             return
         if path == "/api/media":
             if not self._current_user():
@@ -435,6 +592,18 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == "/api/upload":
+            if not self._need_user():
+                return
+            payload, err = save_uploads(self)
+            if err:
+                self._json(400, {"ok": False, "error": err})
+                return
+            code = 200 if payload.get("saved") else 400
+            payload["ok"] = bool(payload.get("saved"))
+            payload["tracks"] = list_tracks()
+            self._json(code, payload)
+            return
         data = self._read_json()
         if data is None:
             self._json(400, {"ok": False, "error": "invalid json"})
@@ -456,6 +625,24 @@ class Handler(SimpleHTTPRequestHandler):
             self._clear_session()
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "/api/tag":
+            if not self._need_user():
+                return
+            ok, err = set_genre(data.get("name"), data.get("genre"))
+            if not ok:
+                self._json(400, {"ok": False, "error": err})
+                return
+            self._json(200, {"ok": True, "tracks": list_tracks()})
+            return
+        if path == "/api/delete":
+            if not self._need_user():
+                return
+            ok, err = delete_track(data.get("name"))
+            if not ok:
+                self._json(400, {"ok": False, "error": err})
+                return
+            self._json(200, {"ok": True, "tracks": list_tracks()})
             return
         self._json(404, {"ok": False, "error": "not found"})
 

@@ -279,6 +279,29 @@
       border: 1px solid var(--line);
       color: var(--muted);
     }
+    .lib-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .lib-head h2 { margin: 0; }
+    .lib-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .lib-actions .btn { height: 40px; padding: 0 14px; }
+    .lib-actions .btn.on {
+      background: var(--gold);
+      color: var(--gold-text);
+      border-color: var(--gold);
+    }
+    .lib-log {
+      margin: 0 0 16px;
+      min-height: 1.2em;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .lib-log.err { color: var(--danger); }
     .tracks { display: grid; gap: 8px; }
     .track {
       display: grid;
@@ -295,9 +318,34 @@
     }
     .track:hover { border-color: var(--line); background: var(--bg-hover); }
     .track.on { border-color: rgba(226,179,64,0.35); background: var(--gold-dim); }
+    .track.editing { grid-template-columns: 36px 1fr minmax(140px, 180px) auto; cursor: default; }
     .track .n { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.85rem; }
     .track strong { display: block; font-size: 0.95rem; }
     .track em { color: var(--muted); font-style: normal; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .track select {
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--bg-input);
+      color: var(--text);
+      padding: 0 10px;
+      font-size: 0.85rem;
+    }
+    .btn.danger {
+      height: 36px;
+      padding: 0 12px;
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid rgba(255,107,107,0.35);
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.8rem;
+    }
+    .btn.danger:hover { background: rgba(255,107,107,0.12); }
+    #view-library.drop {
+      outline: 2px dashed rgba(226,179,64,0.45);
+      outline-offset: -8px;
+    }
     .stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -468,11 +516,19 @@
       </div>
     </main>
     <main class="view hidden" id="view-library">
-      <h2>Library</h2>
-      <p class="lede">Audio on this host. Tap a row to play it here.</p>
+      <div class="lib-head">
+        <h2>Library</h2>
+        <div class="lib-actions">
+          <button class="btn ghost" id="btn-upload" type="button">Upload tracks</button>
+          <button class="btn ghost" id="btn-manage" type="button">Manage</button>
+        </div>
+      </div>
+      <p class="lede" id="lib-lede">Audio on this host. Tap a row to play it here.</p>
+      <p class="lib-log" id="lib-log"></p>
+      <input id="file" type="file" accept=".opus,.mp3,.flac,.ogg,.wav,.m4a,.aac,audio/*" multiple hidden>
       <div id="lib-empty" class="empty">
         <h3>No music yet</h3>
-        <p>MP3, FLAC, or Opus files in /data/music will show up here.</p>
+        <p>Upload MP3, FLAC, or Opus, or drop files onto this page.</p>
         <div class="formats"><span>MP3</span><span>FLAC</span><span>Opus</span></div>
       </div>
       <div id="track-list" class="tracks"></div>
@@ -484,7 +540,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.2</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.3</span></div>
         <div class="row"><div>Audio out</div><span>This browser</span></div>
       </div>
     </main>
@@ -517,8 +573,10 @@
     const ctx = canvas.getContext("2d");
     const state = {
       tracks: [],
+      genres: [],
       index: -1,
       playing: false,
+      manage: false,
       bins: new Float32Array(48)
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
@@ -573,18 +631,109 @@
       return parts.filter(Boolean).join(" · ");
     }
 
+    function setLibLog(text, isErr) {
+      const el = document.getElementById("lib-log");
+      el.textContent = text || "";
+      el.classList.toggle("err", !!isErr);
+    }
+
+    function applyTracks(tracks) {
+      const playingName = currentTrack() && currentTrack().name;
+      state.tracks = tracks || [];
+      if (playingName) {
+        const next = state.tracks.findIndex((t) => t.name === playingName);
+        state.index = next;
+        if (next < 0) {
+          try { deck.pause(); } catch (_e) {}
+          deck.removeAttribute("src");
+          state.playing = false;
+        }
+      }
+      paintNow();
+    }
+
     function paintLibrary() {
       const empty = document.getElementById("lib-empty");
       const list = document.getElementById("track-list");
+      const manageBtn = document.getElementById("btn-manage");
+      const lede = document.getElementById("lib-lede");
       empty.classList.toggle("hidden", state.tracks.length > 0);
+      manageBtn.classList.toggle("on", state.manage);
+      lede.textContent = state.manage
+        ? "Manage is on. Set a genre or delete a file. Playback is paused on this list."
+        : "Audio on this host. Tap a row to play it here.";
       list.innerHTML = "";
       state.tracks.forEach((track, i) => {
+        if (state.manage) {
+          const row = document.createElement("div");
+          row.className = "track editing" + (i === state.index ? " on" : "");
+          const num = document.createElement("span");
+          num.className = "n";
+          num.textContent = String(i + 1).padStart(2, "0");
+          const info = document.createElement("span");
+          const title = document.createElement("strong");
+          title.textContent = track.title;
+          const meta = document.createElement("em");
+          meta.textContent = formatMeta(track);
+          info.appendChild(title);
+          info.appendChild(meta);
+          const sel = document.createElement("select");
+          sel.setAttribute("aria-label", "Genre");
+          const blank = document.createElement("option");
+          blank.value = "";
+          blank.textContent = "Genre";
+          sel.appendChild(blank);
+          state.genres.forEach((g) => {
+            const opt = document.createElement("option");
+            opt.value = g;
+            opt.textContent = g;
+            sel.appendChild(opt);
+          });
+          sel.value = track.genre || "";
+          sel.onchange = async () => {
+            try {
+              const data = await api("/api/tag", {
+                method: "POST",
+                body: JSON.stringify({ name: track.name, genre: sel.value })
+              });
+              applyTracks(data.tracks);
+              setLibLog(sel.value ? "Genre set to " + sel.value : "Genre cleared");
+            } catch (e) {
+              setLibLog(e.message || "could not set genre", true);
+            }
+          };
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "btn danger";
+          del.textContent = "Delete";
+          del.onclick = async () => {
+            if (!window.confirm("Delete “" + track.title + "” from this host?")) return;
+            try {
+              const data = await api("/api/delete", {
+                method: "POST",
+                body: JSON.stringify({ name: track.name })
+              });
+              applyTracks(data.tracks);
+              setLibLog("Deleted " + track.title);
+            } catch (e) {
+              setLibLog(e.message || "could not delete", true);
+            }
+          };
+          row.appendChild(num);
+          row.appendChild(info);
+          row.appendChild(sel);
+          row.appendChild(del);
+          list.appendChild(row);
+          return;
+        }
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "track" + (i === state.index ? " on" : "");
-        btn.innerHTML = "<span class=\"n\">" + String(i + 1).padStart(2, "0") + "</span><span><strong></strong></span><em></em>";
+        btn.innerHTML = "<span class=\"n\">" + String(i + 1).padStart(2, "0") + "</span><span><strong></strong><em></em></span><em></em>";
         btn.querySelector("strong").textContent = track.title;
-        btn.querySelector("em").textContent = formatMeta(track);
+        const ems = btn.querySelectorAll("em");
+        ems[0].textContent = track.genre || "";
+        ems[1].textContent = formatMeta(track);
         btn.onclick = () => playIndex(i);
         list.appendChild(btn);
       });
@@ -740,8 +889,8 @@
       gate.classList.add("hidden");
       app.classList.remove("hidden");
       paintUser(status);
-      state.tracks = status.tracks || [];
-      paintNow();
+      state.genres = status.genres || [];
+      applyTracks(status.tracks || []);
       resize();
     }
 
@@ -812,6 +961,58 @@
 
     document.querySelectorAll("nav.side button").forEach((btn) => {
       btn.onclick = () => showView(btn.dataset.view);
+    });
+
+    document.getElementById("btn-manage").onclick = () => {
+      state.manage = !state.manage;
+      setLibLog(state.manage ? "Manage is on" : "");
+      paintLibrary();
+    };
+
+    const fileInput = document.getElementById("file");
+    document.getElementById("btn-upload").onclick = () => fileInput.click();
+    fileInput.onchange = () => {
+      if (fileInput.files && fileInput.files.length) uploadFiles(fileInput.files);
+      fileInput.value = "";
+    };
+
+    async function uploadFiles(fileList) {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+      const body = new FormData();
+      files.forEach((f) => body.append("file", f));
+      setLibLog("Uploading " + files.length + " file" + (files.length === 1 ? "" : "s") + "…");
+      try {
+        const res = await fetch("/api/upload", { method: "POST", body, credentials: "same-origin" });
+        let data = {};
+        try { data = await res.json(); } catch (_e) {}
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        applyTracks(data.tracks || []);
+        const n = (data.saved || []).length;
+        const errs = (data.errors || []).join(" · ");
+        setLibLog(n ? ("Added " + n + " track" + (n === 1 ? "" : "s") + (errs ? ". " + errs : "")) : (errs || "nothing saved"), !n);
+        showView("library");
+      } catch (e) {
+        setLibLog(e.message || "upload failed", true);
+      }
+    }
+
+    const libView = document.getElementById("view-library");
+    ["dragenter", "dragover"].forEach((evName) => {
+      libView.addEventListener(evName, (ev) => {
+        ev.preventDefault();
+        libView.classList.add("drop");
+      });
+    });
+    ["dragleave", "drop"].forEach((evName) => {
+      libView.addEventListener(evName, (ev) => {
+        ev.preventDefault();
+        libView.classList.remove("drop");
+      });
+    });
+    libView.addEventListener("drop", (ev) => {
+      const files = ev.dataTransfer && ev.dataTransfer.files;
+      if (files && files.length) uploadFiles(files);
     });
 
     (async () => {

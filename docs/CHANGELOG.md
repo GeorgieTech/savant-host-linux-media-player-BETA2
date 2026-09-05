@@ -1,5 +1,11 @@
 # Changelog
 
+## V0.3 — library manage + upload
+
+- Library header: **Upload tracks** and **Manage**
+- Manage: set genre or delete a file on the host
+- Upload (picker or drop) onto `/data/music`
+
 ## V0.2 — browser playback + visualizer
 
 - Library lists MP3 / FLAC / Opus on `/data/music`

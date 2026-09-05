@@ -1,4 +1,4 @@
-# host-webui (Gigawatt V0.2)
+# host-webui (Gigawatt V0.3)
 
 Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 
@@ -9,5 +9,8 @@ Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 - `POST /api/auth/logout`
 - `GET /api/library` — tracks in `/data/music` (signed in)
 - `GET /api/media?name=` — audio stream with HTTP Range (signed in)
+- `POST /api/upload` — multipart `file` fields into `/data/music`
+- `POST /api/tag` — `{name, genre}` (empty genre clears)
+- `POST /api/delete` — `{name}`
 
 Copy `index.html` and `server.py` to `/data/www`.
