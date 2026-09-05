@@ -1,5 +1,11 @@
 # Changelog
 
+## V0.15 — Wi-Fi in Settings
+
+- Settings: turn Wi-Fi On/Off, scan networks, join with a password (ConnMan / wlan0)
+- Ethernet stays as-is; Wi-Fi is for when the cable is unplugged
+- Passwords stay in ConnMan on the host, not in git
+
 ## V0.14 — library browse, art, lyrics
 
 - Library page: Artists / Albums / Tracks, search, and breadcrumbs like NAS Music

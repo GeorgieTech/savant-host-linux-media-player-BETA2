@@ -1,4 +1,4 @@
-# host-webui (Gigawatt V0.14)
+# host-webui (Gigawatt V0.15)
 
 Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 
@@ -24,6 +24,9 @@ Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 - `GET/POST /api/dlna` — `{enabled}` and/or `{name}` (UPnP MediaRenderer on UDP 1900 + TCP 49494)
 - `GET/POST /api/spotify` — `{enabled}` and/or `{name}` (Spotify Connect, Premium)
 - `GET/POST /api/nas` — SMB connect `{host, share, folder, username, password, domain, enabled}`
+- `GET /api/wifi` (via `/api/now`) — radio, joined SSID, Ethernet
+- `GET /api/wifi/scan` — ConnMan scan of nearby networks
+- `POST /api/wifi` — `{enabled}` On/Off, `{service, password}` join, `{disconnect}`
 - `GET /api/nas/library` and `GET /api/nas/browse` — `{path, deep}` lists artists / albums / tracks on the mounted share
 - `POST /api/library/save` — `{tags: {name: genre}, delete: [name]}` after Manage
 - `POST /api/tag` — `{name, genre}` (empty genre clears)

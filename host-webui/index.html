@@ -799,6 +799,25 @@
       white-space: pre-wrap;
     }
     .lyrics-body .on { color: var(--text); font-weight: 700; }
+    .wifi-list { display: grid; gap: 6px; width: 100%; }
+    .wifi-net {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+      text-align: left;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+      background: var(--bg-input);
+      color: inherit;
+    }
+    .wifi-net:hover { border-color: var(--line); }
+    .wifi-net.on { border-color: rgba(226,179,64,0.35); background: var(--gold-dim); }
+    .wifi-net strong { display: block; font-size: 0.95rem; }
+    .wifi-net em { color: var(--muted); font-style: normal; font-size: 0.75rem; }
+    .wifi-bars { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.8rem; }
 
     @media (max-width: 820px) {
       #app {
@@ -990,7 +1009,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.14</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.15</span></div>
         <form class="row res-row" id="pw-form">
           <div class="detail">
             <div>Password</div>
@@ -1089,6 +1108,32 @@
           <form class="set-field" id="spotify-name-form">
             <input id="spotify-name" name="spotify_name" type="text" maxlength="50" autocomplete="off" spellcheck="false">
             <button class="btn primary" id="spotify-name-save" type="submit">Save</button>
+          </form>
+        </div>
+        <h3 class="set-h">Wi-Fi</h3>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>Radio</div>
+            <p id="wifi-note">Off. Turn on to join a network when Ethernet is unplugged.</p>
+          </div>
+          <div class="lib-actions">
+            <button class="btn ghost" id="wifi-off" type="button">Off</button>
+            <button class="btn ghost" id="wifi-on" type="button">On</button>
+          </div>
+        </div>
+        <div class="row res-row">
+          <div class="res-top">
+            <div>Networks</div>
+            <button class="btn ghost" id="wifi-scan" type="button">Scan</button>
+          </div>
+          <div id="wifi-list" class="wifi-list"></div>
+          <form id="wifi-join" class="set-grid hidden">
+            <p id="wifi-join-ssid"></p>
+            <label>Password<input id="wifi-pass" type="password" maxlength="63" minlength="8" autocomplete="off"></label>
+            <div class="lib-actions">
+              <button class="btn primary" id="wifi-join-btn" type="submit">Join</button>
+            </div>
+            <p class="err" id="wifi-join-err"></p>
           </form>
         </div>
         <h3 class="set-h">NAS</h3>
@@ -1229,6 +1274,8 @@
       nasLoading: false,
       nasCatalog: { artists: [], albums: [], tracks: [], crumbs: [], path: "", parent: "", error: "", capped: false },
       nas: { available: false, mounted: false, host: "", share: "", folder: "", username: "", domain: "", password_set: false, error: "", path: "" },
+      wifi: { available: false, powered: false, connected: false, ssid: "", ip: "", ethernet: false, ethernet_ip: "", error: "", networks: [] },
+      wifiPick: null,
       libView: "artists",
       libArtist: "",
       libAlbum: "",
@@ -1947,6 +1994,117 @@
       }
     }
 
+    function wifiBars(n) {
+      const v = Math.max(0, Math.min(100, Number(n) || 0));
+      if (v >= 75) return "▂▄▆█";
+      if (v >= 50) return "▂▄▆";
+      if (v >= 25) return "▂▄";
+      return "▂";
+    }
+
+    function applyWifi(snap) {
+      if (!snap) return;
+      const prev = state.wifi && state.wifi.networks;
+      state.wifi = snap;
+      if (snap.powered && (!snap.networks || !snap.networks.length) && prev && prev.length) {
+        state.wifi.networks = prev;
+      }
+      paintWifiSettings();
+    }
+
+    function paintWifiSettings() {
+      const wifi = state.wifi || {};
+      const onBtn = document.getElementById("wifi-on");
+      const offBtn = document.getElementById("wifi-off");
+      const scanBtn = document.getElementById("wifi-scan");
+      const list = document.getElementById("wifi-list");
+      const join = document.getElementById("wifi-join");
+      if (!onBtn) return;
+      onBtn.disabled = !wifi.available;
+      offBtn.disabled = !wifi.available;
+      scanBtn.disabled = !wifi.available || !wifi.powered;
+      onBtn.classList.toggle("on", !!wifi.powered);
+      offBtn.classList.toggle("on", !wifi.powered);
+      let note = "Wi-Fi is not available on this host.";
+      if (wifi.available) {
+        if (wifi.error) note = wifi.error;
+        else if (!wifi.powered) note = "Off. Turn on to scan and join a network.";
+        else if (wifi.connected) note = "Joined " + (wifi.ssid || "a network") + (wifi.ip ? " · " + wifi.ip : "") + (wifi.ethernet ? ". Ethernet is also up." : ".");
+        else if (wifi.ethernet) note = "On. Ethernet is " + (wifi.ethernet_ip || "connected") + ". Join Wi-Fi for when the cable is unplugged.";
+        else note = "On. Scan and pick a network.";
+      }
+      document.getElementById("wifi-note").textContent = note;
+      list.innerHTML = "";
+      const nets = wifi.networks || [];
+      nets.forEach((net) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "wifi-net" + (net.connected ? " on" : "");
+        const info = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = net.name || "(hidden network)";
+        const meta = document.createElement("em");
+        const bits = [];
+        if (net.connected) bits.push("joined");
+        if (net.favorite && !net.connected) bits.push("saved");
+        if (net.security && net.security !== "none") bits.push("password");
+        else bits.push("open");
+        meta.textContent = bits.join(" · ");
+        info.appendChild(title);
+        info.appendChild(meta);
+        const bars = document.createElement("span");
+        bars.className = "wifi-bars";
+        bars.textContent = net.strength != null ? wifiBars(net.strength) : "";
+        btn.appendChild(info);
+        btn.appendChild(bars);
+        btn.onclick = () => pickWifi(net);
+        list.appendChild(btn);
+      });
+      if (state.wifiPick && join) {
+        const pick = state.wifiPick;
+        join.classList.toggle("hidden", !wifi.powered || pick.connected);
+        document.getElementById("wifi-join-ssid").textContent = "Join " + (pick.name || "this network");
+        const pass = document.getElementById("wifi-pass");
+        const needPass = pick.security && pick.security !== "none";
+        pass.closest("label").classList.toggle("hidden", !needPass);
+        pass.required = !!needPass;
+      } else if (join) {
+        join.classList.add("hidden");
+      }
+    }
+
+    function pickWifi(net) {
+      state.wifiPick = net;
+      document.getElementById("wifi-join-err").textContent = "";
+      document.getElementById("wifi-pass").value = "";
+      paintWifiSettings();
+      if (net.connected) return;
+      if (!net.security || net.security === "none") {
+        joinWifi(net.id, "");
+      }
+    }
+
+    async function joinWifi(service, password) {
+      const err = document.getElementById("wifi-join-err");
+      const btn = document.getElementById("wifi-join-btn");
+      err.textContent = "";
+      btn.disabled = true;
+      document.getElementById("wifi-note").textContent = "Joining…";
+      try {
+        const data = await api("/api/wifi", {
+          method: "POST",
+          body: JSON.stringify({ service: service, password: password || "" })
+        });
+        document.getElementById("wifi-pass").value = "";
+        applyWifi(data);
+        if (!data.connected) err.textContent = data.error || "could not join";
+      } catch (e) {
+        err.textContent = e.message || "could not join";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     function paintNasSettings() {
       const nas = state.nas || {};
       const onBtn = document.getElementById("nas-on");
@@ -2111,6 +2269,7 @@
       if (data.dlna) applyCast("dlna", data.dlna, paintDlnaSettings);
       if (data.spotify) applyCast("spotify", data.spotify, paintSpotifySettings);
       if (data.nas) applyNas(data.nas);
+      if (data.wifi) applyWifi(data.wifi);
       if (!data.airplay && !data.dlna && !data.spotify) {
         paintOutputSettings();
         paintNow({ skipLib: true });
@@ -2622,6 +2781,7 @@
       applyCast("dlna", status.dlna || {}, paintDlnaSettings);
       applyCast("spotify", status.spotify || {}, paintSpotifySettings);
       applyNas(status.nas || {});
+      applyWifi(status.wifi || {});
       if (status.nas && status.nas.mounted) loadNasBrowse("", { view: "artists" });
       paintOutputSettings();
       startAirplayPoll();
@@ -2871,6 +3031,51 @@
       if (pass) payload.password = pass;
       return Object.assign(payload, extra || {});
     }
+
+    document.getElementById("wifi-on").onclick = async () => {
+      const btn = document.getElementById("wifi-on");
+      btn.disabled = true;
+      try {
+        applyWifi(await api("/api/wifi", { method: "POST", body: JSON.stringify({ enabled: true }) }));
+      } catch (e) {
+        document.getElementById("wifi-note").textContent = e.message || "could not turn Wi-Fi on";
+      } finally {
+        btn.disabled = false;
+        paintWifiSettings();
+      }
+    };
+    document.getElementById("wifi-off").onclick = async () => {
+      const btn = document.getElementById("wifi-off");
+      btn.disabled = true;
+      try {
+        applyWifi(await api("/api/wifi", { method: "POST", body: JSON.stringify({ enabled: false }) }));
+        state.wifiPick = null;
+      } catch (e) {
+        document.getElementById("wifi-note").textContent = e.message || "could not turn Wi-Fi off";
+      } finally {
+        btn.disabled = false;
+        paintWifiSettings();
+      }
+    };
+    document.getElementById("wifi-scan").onclick = async () => {
+      const btn = document.getElementById("wifi-scan");
+      btn.disabled = true;
+      document.getElementById("wifi-note").textContent = "Scanning…";
+      try {
+        applyWifi(await api("/api/wifi/scan"));
+      } catch (e) {
+        document.getElementById("wifi-note").textContent = e.message || "scan failed";
+      } finally {
+        btn.disabled = false;
+        paintWifiSettings();
+      }
+    };
+    document.getElementById("wifi-join").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const pick = state.wifiPick;
+      if (!pick) return;
+      await joinWifi(pick.id, document.getElementById("wifi-pass").value);
+    });
 
     document.getElementById("nas-on").onclick = async () => {
       const btn = document.getElementById("nas-on");

@@ -19,7 +19,7 @@ From the repo root:
 
 ```sh
 scp -O host-webui/index.html host-webui/server.py host-webui/hostplayer.py \
-  host-webui/airplay.py host-webui/dlna.py host-webui/spotify.py host-webui/nas.py \
+  host-webui/airplay.py host-webui/dlna.py host-webui/spotify.py host-webui/nas.py host-webui/wifi.py \
   host-webui/pin-hostname.sh host-webui/gigawatt-hostname.service \
   host-webui/gigawatt-pulse.service host-webui/host-webui.service \
   RPM@192.168.1.178:/tmp/
@@ -28,7 +28,7 @@ scp -O host-webui/index.html host-webui/server.py host-webui/hostplayer.py \
 ssh RPM@192.168.1.178
 sudo -n /usr/bin/env bash -c '
   cp /tmp/index.html /tmp/server.py /tmp/hostplayer.py /tmp/airplay.py \
-    /tmp/dlna.py /tmp/spotify.py /tmp/nas.py /tmp/pin-hostname.sh /data/www/
+    /tmp/dlna.py /tmp/spotify.py /tmp/nas.py /tmp/wifi.py /tmp/pin-hostname.sh /data/www/
   chmod +x /data/www/pin-hostname.sh
   cp /tmp/host-webui.service /tmp/gigawatt-hostname.service /tmp/gigawatt-pulse.service \
     /etc/systemd/system/

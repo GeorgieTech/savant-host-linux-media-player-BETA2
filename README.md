@@ -8,13 +8,13 @@ This project is **not affiliated with Savant Systems**.
 
 **Do not use 192.168.1.40** (live Carrillos Resident Savant). Beta1 stays on **192.168.1.180**. This tree is **192.168.1.178** only.
 
-## Current status — V0.14
+## Current status — V0.15
 
 Target: **192.168.1.178** (`GWH-001aae0733360000`)
 
 Live UI: [http://192.168.1.178/](http://192.168.1.178/)
 
-V0.14 organizes the local Library like NAS Music, reads tags and cover art from files, and shows live lyrics on Now Playing. AirPlay stays **AirPlay 1**.
+V0.15 adds Wi-Fi On/Off, scan, and join on Settings. Library browse, tags, art, and live lyrics stay from V0.14. AirPlay stays **AirPlay 1**.
 
 | Piece | State |
 |---|---|

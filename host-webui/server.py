@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.14 — library browse, tags, art, lyrics, NAS, EQ, AirPlay, DLNA, Spotify."""
+"""Gigawatt V0.15 — library, NAS, Wi-Fi, EQ, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -24,6 +24,7 @@ from dlna import DlnaRenderer
 from hostplayer import HostPlayer
 from nas import NasShare
 from spotify import Spotify
+from wifi import Wifi
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("WEBUI_PORT", "80"))
@@ -36,7 +37,7 @@ PROBE_META_FILE = os.path.join(STATE_DIR, "library-meta.json")
 PROBE_CACHE_MAX = 800
 ART_DIR = os.path.join(STATE_DIR, "art")
 LYRICS_DIR = os.path.join(STATE_DIR, "lyrics")
-VERSION = "0.14"
+VERSION = "0.15"
 COVER_NAMES = (
     "cover.jpg",
     "cover.png",
@@ -115,6 +116,7 @@ HOST = None
 DLNA = None
 SPOTIFY = None
 NAS = None
+WIFI = None
 
 
 def _empty_source(name=DEFAULT_NAME):
@@ -141,6 +143,24 @@ def dlna_snapshot():
 
 def spotify_snapshot():
     return SPOTIFY.snapshot() if SPOTIFY is not None else _empty_source()
+
+
+def wifi_snapshot(refresh=False):
+    if WIFI is None:
+        return {
+            "available": False,
+            "powered": False,
+            "connected": False,
+            "ssid": "",
+            "ip": "",
+            "security": "",
+            "service": "",
+            "ethernet": False,
+            "ethernet_ip": "",
+            "error": "",
+            "networks": [],
+        }
+    return WIFI.snapshot(refresh=refresh)
 
 
 def nas_snapshot():
@@ -1611,10 +1631,11 @@ class Handler(SimpleHTTPRequestHandler):
                     "dlna": dlna_snapshot(),
                     "spotify": spotify_snapshot(),
                     "nas": nas_snapshot(),
+                    "wifi": wifi_snapshot(),
                 },
             )
             return
-        if path in ("/api/airplay", "/api/now", "/api/dlna", "/api/spotify", "/api/nas"):
+        if path in ("/api/airplay", "/api/now", "/api/dlna", "/api/spotify", "/api/nas", "/api/wifi"):
             if not self._need_user():
                 return
             player = load_player()
@@ -1631,12 +1652,28 @@ class Handler(SimpleHTTPRequestHandler):
                     "dlna": dlna_snapshot(),
                     "spotify": spotify_snapshot(),
                     "nas": nas_snapshot(),
+                    "wifi": wifi_snapshot(),
                     "hostname": ident.get("hostname"),
                     "ip": ident.get("ip"),
                     "mem": mem,
                     "disk": disk,
                 },
             )
+            return
+        if path == "/api/wifi/scan":
+            if not self._need_user():
+                return
+            if WIFI is None or not WIFI.available():
+                snap = wifi_snapshot()
+                snap["ok"] = False
+                snap["error"] = snap.get("error") or "Wi-Fi is not available on this host"
+                self._json(409, snap)
+                return
+            networks = WIFI.scan()
+            snap = wifi_snapshot()
+            snap["ok"] = True
+            snap["networks"] = networks
+            self._json(200, snap)
             return
         if path == "/api/library":
             if not self._need_user():
@@ -1972,6 +2009,42 @@ class Handler(SimpleHTTPRequestHandler):
             snap["ok"] = True
             self._json(200, snap)
             return
+        if path == "/api/wifi":
+            if not self._need_user():
+                return
+            if WIFI is None or not WIFI.available():
+                snap = wifi_snapshot()
+                snap["ok"] = False
+                snap["error"] = snap.get("error") or "Wi-Fi is not available on this host"
+                self._json(409, snap)
+                return
+            if "enabled" in data or "powered" in data:
+                want = data.get("enabled")
+                if want is None:
+                    want = data.get("powered")
+                ok = WIFI.set_powered(bool(want))
+                snap = wifi_snapshot()
+                snap["ok"] = ok
+                self._json(200 if ok else 409, snap)
+                return
+            if data.get("disconnect"):
+                ok = WIFI.disconnect()
+                snap = wifi_snapshot()
+                snap["ok"] = ok
+                self._json(200 if ok else 409, snap)
+                return
+            service = str(data.get("service") or data.get("id") or "").strip()
+            if service:
+                password = str(data.get("password") or data.get("passphrase") or "")
+                ok = WIFI.connect(service, password)
+                snap = wifi_snapshot()
+                snap["ok"] = ok
+                self._json(200 if ok else 409, snap)
+                return
+            snap = wifi_snapshot()
+            snap["ok"] = True
+            self._json(200, snap)
+            return
         if path == "/api/library/save":
             if not self._need_user():
                 return
@@ -2112,7 +2185,7 @@ def _validate_account(username, password, confirm):
 
 
 def main():
-    global AIRPLAY, HOST, DLNA, SPOTIFY, NAS
+    global AIRPLAY, HOST, DLNA, SPOTIFY, NAS, WIFI
     ensure_dirs()
     os.chdir(ROOT)
     HOST = HostPlayer(on_end=_optical_ended)
@@ -2146,6 +2219,7 @@ def main():
     NAS = NasShare(NAS_BIN, NAS_DIR, STATE_DIR)
     if NAS.cfg.get("enabled"):
         NAS.connect()
+    WIFI = Wifi()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Gigawatt V%s on 0.0.0.0:%s" % (VERSION, PORT), flush=True)
     try:
