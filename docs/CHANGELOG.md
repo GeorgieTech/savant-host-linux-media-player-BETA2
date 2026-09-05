@@ -1,5 +1,11 @@
 # Changelog
 
+## V0.4 — volume + EQ
+
+- Bottom player: Volume slider (0–100), same type as Beta1
+- New **EQ** page: 10-band equalizer for this-browser playback
+- Volume and EQ persist on the host
+
 ## V0.3 — library manage + upload
 
 - Library header: **Upload tracks** and **Manage**

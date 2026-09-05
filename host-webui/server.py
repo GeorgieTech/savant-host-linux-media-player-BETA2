@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.3 — local accounts, library, browser playback, manage + upload."""
+"""Gigawatt V0.4 — library, browser playback, volume, EQ."""
 import cgi
 import hashlib
 import json
@@ -22,7 +22,9 @@ MUSIC_DIR = os.environ.get("MUSIC_DIR", "/data/music")
 STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
-VERSION = "0.3"
+PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
+VERSION = "0.4"
+EQ_BANDS = 10
 MAX_UPLOAD = 90 * 1024 * 1024
 COOKIE = "gigawatt_session"
 GENRES = [
@@ -141,6 +143,55 @@ def host_snapshot():
         except Exception:
             ip = ""
     return {"hostname": hostname, "ip": ip}
+
+
+def _clamp_int(value, lo, hi, default):
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
+
+
+def _clamp_eq(values):
+    out = [0] * EQ_BANDS
+    if not isinstance(values, list):
+        return out
+    for i in range(min(EQ_BANDS, len(values))):
+        try:
+            out[i] = max(-12, min(12, float(values[i])))
+        except (TypeError, ValueError):
+            out[i] = 0
+    return out
+
+
+def load_player():
+    try:
+        with open(PLAYER_FILE, "r") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    return {
+        "volume": _clamp_int(data.get("volume"), 0, 100, 80),
+        "eq": _clamp_eq(data.get("eq")),
+    }
+
+
+def save_player(volume=None, eq=None):
+    current = load_player()
+    if volume is not None:
+        current["volume"] = _clamp_int(volume, 0, 100, current["volume"])
+    if eq is not None:
+        current["eq"] = _clamp_eq(eq)
+    ensure_dirs()
+    tmp = PLAYER_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(current, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, PLAYER_FILE)
+    return current
 
 
 def load_tags():
@@ -575,6 +626,7 @@ class Handler(SimpleHTTPRequestHandler):
                 username = self._current_user()
             host = host_snapshot()
             tracks = list_tracks() if username else []
+            player = load_player()
             self._json(
                 200,
                 {
@@ -588,6 +640,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "output": "browser",
                     "tracks": tracks,
                     "genres": list(GENRES),
+                    "volume": player["volume"],
+                    "eq": player["eq"],
                 },
             )
             return
@@ -664,6 +718,18 @@ class Handler(SimpleHTTPRequestHandler):
             self._clear_session()
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "/api/volume":
+            if not self._need_user():
+                return
+            player = save_player(volume=data.get("volume"))
+            self._json(200, {"ok": True, "volume": player["volume"]})
+            return
+        if path == "/api/eq":
+            if not self._need_user():
+                return
+            player = save_player(eq=data.get("eq"))
+            self._json(200, {"ok": True, "eq": player["eq"]})
             return
         if path == "/api/library/save":
             if not self._need_user():

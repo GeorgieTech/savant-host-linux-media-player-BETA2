@@ -423,11 +423,75 @@
       cursor: pointer;
     }
     .bar i { display: block; width: 0; height: 100%; background: var(--gold); pointer-events: none; }
+    .player-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+      min-width: 0;
+    }
+    .vol {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-size: 0.68rem;
+      color: var(--muted);
+    }
+    .vol input[type=range] {
+      width: 150px;
+      accent-color: var(--gold);
+    }
+    .eq-board {
+      display: flex;
+      gap: 6px;
+      justify-content: space-between;
+      align-items: stretch;
+      padding: 22px 18px 18px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--bg-elev);
+      overflow-x: auto;
+    }
+    .eq-band {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      min-width: 44px;
+      flex: 1;
+    }
+    .eq-band .gain {
+      font-size: 0.72rem;
+      color: var(--gold);
+      font-variant-numeric: tabular-nums;
+      min-height: 1em;
+    }
+    .eq-slider {
+      height: 170px;
+      width: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .eq-slider input[type=range] {
+      width: 170px;
+      transform: rotate(-90deg);
+      accent-color: var(--gold);
+    }
+    .eq-band .hz {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .eq-actions { display: flex; gap: 8px; margin-top: 16px; }
 
     @media (max-width: 820px) {
       #app {
         grid-template-columns: 1fr;
-        grid-template-rows: 56px 1fr 72px 64px;
+        grid-template-rows: 56px 1fr auto 64px;
         grid-template-areas:
           "top"
           "main"
@@ -441,11 +505,17 @@
         border-top: 1px solid var(--line);
         padding: 8px 8px calc(8px + var(--safe-b));
       }
-      nav.side button { flex: 1; justify-content: center; height: 44px; font-size: 0.8rem; }
+      nav.side button { flex: 1; justify-content: center; height: 44px; font-size: 0.72rem; padding: 0 4px; }
       main.view { padding: 20px 18px 16px; }
       .stage canvas { height: 240px; }
-      footer.player { grid-template-columns: 1fr auto; padding: 8px 16px; }
+      footer.player {
+        grid-template-columns: 1fr auto;
+        padding: 8px 16px 10px;
+      }
+      .player-right { grid-column: 1 / -1; align-items: stretch; }
       .meter { display: none; }
+      .vol { width: 100%; }
+      .vol input[type=range] { flex: 1; width: auto; }
     }
   </style>
 </head>
@@ -502,6 +572,7 @@
     <nav class="side" aria-label="App">
       <button type="button" data-view="home" class="on">Home</button>
       <button type="button" data-view="library">Library</button>
+      <button type="button" data-view="eq">EQ</button>
       <button type="button" data-view="settings">Settings</button>
     </nav>
     <main class="view" id="view-home">
@@ -535,6 +606,14 @@
       </div>
       <div id="track-list" class="tracks"></div>
     </main>
+    <main class="view hidden" id="view-eq">
+      <h2>EQ</h2>
+      <p class="lede">Ten-band equalizer for playback in this browser. Move a band, then keep playing.</p>
+      <div class="eq-board" id="eq-board"></div>
+      <div class="eq-actions">
+        <button class="btn ghost" id="btn-eq-flat" type="button">Flat</button>
+      </div>
+    </main>
     <main class="view hidden" id="view-settings">
       <h2>Settings</h2>
       <p class="lede">This account stays on the host. Nothing is sent to the cloud.</p>
@@ -542,7 +621,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.3</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.4</span></div>
         <div class="row"><div>Audio out</div><span>This browser</span></div>
       </div>
     </main>
@@ -556,10 +635,16 @@
         <button type="button" class="play" id="btn-play" aria-label="Play" disabled>▶</button>
         <button type="button" id="btn-next" aria-label="Next" disabled>⏭</button>
       </div>
-      <div class="meter">
-        <span id="t-now">0:00</span>
-        <div class="bar" id="seek" aria-label="Seek"><i id="seek-fill"></i></div>
-        <span id="t-end">0:00</span>
+      <div class="player-right">
+        <div class="meter">
+          <span id="t-now">0:00</span>
+          <div class="bar" id="seek" aria-label="Seek"><i id="seek-fill"></i></div>
+          <span id="t-end">0:00</span>
+        </div>
+        <label class="vol">Volume
+          <input id="vol" type="range" min="0" max="100" value="80" aria-label="Volume">
+          <span id="vol-label">80</span>
+        </label>
       </div>
     </footer>
     <audio id="deck" preload="metadata"></audio>
@@ -573,6 +658,18 @@
     const deck = document.getElementById("deck");
     const canvas = document.getElementById("viz");
     const ctx = canvas.getContext("2d");
+    const EQ_BANDS = [
+      { freq: 32, label: "32", type: "lowshelf" },
+      { freq: 64, label: "64", type: "peaking" },
+      { freq: 125, label: "125", type: "peaking" },
+      { freq: 250, label: "250", type: "peaking" },
+      { freq: 500, label: "500", type: "peaking" },
+      { freq: 1000, label: "1k", type: "peaking" },
+      { freq: 2000, label: "2k", type: "peaking" },
+      { freq: 4000, label: "4k", type: "peaking" },
+      { freq: 8000, label: "8k", type: "peaking" },
+      { freq: 16000, label: "16k", type: "highshelf" }
+    ];
     const state = {
       tracks: [],
       genres: [],
@@ -581,9 +678,14 @@
       manage: false,
       dirty: false,
       edit: { genres: {}, remove: {} },
+      volume: 80,
+      eq: EQ_BANDS.map(() => 0),
       bins: new Float32Array(48)
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
+    let eqNodes = [];
+    let volTimer = null;
+    let eqTimer = null;
 
     async function api(path, opts) {
       const res = await fetch(path, Object.assign({
@@ -604,6 +706,10 @@
       document.querySelectorAll("main.view").forEach((el) => el.classList.toggle("hidden", el.id !== "view-" + name));
       document.querySelectorAll("nav.side button").forEach((btn) => btn.classList.toggle("on", btn.dataset.view === name));
       if (name === "home") requestAnimationFrame(resize);
+      if (name === "eq") {
+        paintEq();
+        ensureAudio();
+      }
     }
 
     function fmtTime(sec) {
@@ -782,6 +888,86 @@
       paintLibrary();
     }
 
+    function fmtGain(n) {
+      const v = Number(n) || 0;
+      if (v > 0) return "+" + v.toFixed(v % 1 ? 1 : 0);
+      return String(v % 1 ? v.toFixed(1) : v);
+    }
+
+    function applyVolume(n, persist) {
+      n = Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
+      state.volume = n;
+      document.getElementById("vol").value = n;
+      document.getElementById("vol-label").textContent = String(n);
+      deck.volume = n / 100;
+      if (!persist) return;
+      if (volTimer) clearTimeout(volTimer);
+      volTimer = setTimeout(() => {
+        api("/api/volume", { method: "POST", body: JSON.stringify({ volume: n }) }).catch(() => {});
+      }, 40);
+    }
+
+    function applyEqGains(gains, persist) {
+      const next = EQ_BANDS.map((_, i) => {
+        const v = Number(gains && gains[i]);
+        if (!isFinite(v)) return 0;
+        return Math.max(-12, Math.min(12, v));
+      });
+      state.eq = next;
+      eqNodes.forEach((node, i) => {
+        try { node.gain.value = next[i]; } catch (_e) {}
+      });
+      document.querySelectorAll("#eq-board input[type=range]").forEach((el, i) => {
+        if (document.activeElement !== el) el.value = String(next[i]);
+        const gainEl = el.closest(".eq-band") && el.closest(".eq-band").querySelector(".gain");
+        if (gainEl) gainEl.textContent = fmtGain(next[i]);
+      });
+      if (!persist) return;
+      if (eqTimer) clearTimeout(eqTimer);
+      eqTimer = setTimeout(() => {
+        api("/api/eq", { method: "POST", body: JSON.stringify({ eq: next }) }).catch(() => {});
+      }, 80);
+    }
+
+    function paintEq() {
+      const board = document.getElementById("eq-board");
+      if (board.dataset.ready === "1") {
+        applyEqGains(state.eq, false);
+        return;
+      }
+      board.innerHTML = "";
+      EQ_BANDS.forEach((band, i) => {
+        const col = document.createElement("div");
+        col.className = "eq-band";
+        const gain = document.createElement("span");
+        gain.className = "gain";
+        gain.textContent = fmtGain(state.eq[i]);
+        const wrap = document.createElement("div");
+        wrap.className = "eq-slider";
+        const input = document.createElement("input");
+        input.type = "range";
+        input.min = "-12";
+        input.max = "12";
+        input.step = "0.5";
+        input.value = String(state.eq[i] || 0);
+        input.setAttribute("aria-label", band.label + " Hz");
+        input.oninput = () => {
+          const next = state.eq.slice();
+          next[i] = Number(input.value);
+          applyEqGains(next, true);
+        };
+        wrap.appendChild(input);
+        const hz = document.createElement("span");
+        hz.className = "hz";
+        hz.textContent = band.label;
+        col.appendChild(gain);
+        col.appendChild(wrap);
+        col.appendChild(hz);
+        board.appendChild(col);
+      });
+      board.dataset.ready = "1";
+    }
+
     function ensureAudio() {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
@@ -793,7 +979,18 @@
         freq = new Uint8Array(analyser.frequencyBinCount);
         timeBuf = new Uint8Array(analyser.fftSize);
         const src = audioCtx.createMediaElementSource(deck);
-        src.connect(analyser);
+        let node = src;
+        eqNodes = EQ_BANDS.map((band, i) => {
+          const filter = audioCtx.createBiquadFilter();
+          filter.type = band.type;
+          filter.frequency.value = band.freq;
+          filter.Q.value = 1.1;
+          filter.gain.value = state.eq[i] || 0;
+          node.connect(filter);
+          node = filter;
+          return filter;
+        });
+        node.connect(analyser);
         analyser.connect(audioCtx.destination);
       }
       if (audioCtx.state === "suspended") audioCtx.resume();
@@ -851,6 +1048,11 @@
       if (!dur || !isFinite(dur)) return;
       const rect = ev.currentTarget.getBoundingClientRect();
       deck.currentTime = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width)) * dur;
+    };
+    document.getElementById("vol").oninput = (ev) => applyVolume(ev.target.value, true);
+    document.getElementById("vol").onchange = (ev) => applyVolume(ev.target.value, true);
+    document.getElementById("btn-eq-flat").onclick = () => {
+      applyEqGains(EQ_BANDS.map(() => 0), true);
     };
 
     function resize() {
@@ -916,6 +1118,9 @@
       app.classList.remove("hidden");
       paintUser(status);
       state.genres = status.genres || [];
+      applyVolume(status.volume != null ? status.volume : 80, false);
+      applyEqGains(status.eq || EQ_BANDS.map(() => 0), false);
+      paintEq();
       applyTracks(status.tracks || []);
       resize();
     }
