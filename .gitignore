@@ -1,0 +1,15 @@
+.DS_Store
+*.pyc
+__pycache__/
+.venv/
+venv/
+*.swp
+*~
+.idea/
+.vscode/
+state/
+**/.auth.json
+**/.users.json
+**/users.json
+Music/
+data/music/

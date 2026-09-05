@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0b0e">
+  <title>Gigawatt</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0b0e;
+      --bg-elev: #12141a;
+      --bg-hover: #1a1d26;
+      --bg-input: #0e1014;
+      --line: rgba(255,255,255,0.08);
+      --text: #f4f5f7;
+      --muted: #8d939e;
+      --gold: #e2b340;
+      --gold-text: #1a1404;
+      --gold-dim: rgba(226,179,64,0.14);
+      --danger: #ff6b6b;
+      --ok: #3ecf8e;
+      --radius: 16px;
+      --font: "Manrope", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --shadow: 0 24px 60px rgba(0,0,0,0.45);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: var(--font);
+      background:
+        radial-gradient(900px 480px at 80% -10%, rgba(226,179,64,0.10), transparent 55%),
+        radial-gradient(700px 500px at -10% 110%, rgba(62,207,142,0.06), transparent 50%),
+        var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font-family: inherit; }
+    button { cursor: pointer; }
+    .hidden { display: none !important; }
+
+    /* Gate */
+    #gate {
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 32px 20px calc(32px + var(--safe-b));
+    }
+    .card {
+      width: min(400px, 100%);
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 32px 28px 28px;
+      box-shadow: var(--shadow);
+    }
+    .brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .mark {
+      width: 52px; height: 52px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #f0c85a, var(--gold));
+      color: var(--gold-text);
+      display: grid; place-items: center;
+      box-shadow: 0 8px 24px rgba(226,179,64,0.28);
+    }
+    .mark svg { width: 26px; height: 26px; display: block; }
+    .brand h1 {
+      margin: 8px 0 0;
+      font-size: 1.55rem;
+      letter-spacing: -0.03em;
+      font-weight: 700;
+    }
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    form { display: grid; gap: 12px; }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    input[type="text"], input[type="password"] {
+      height: 46px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--bg-input);
+      color: var(--text);
+      padding: 0 14px;
+      font-size: 1rem;
+      outline: none;
+    }
+    input:focus {
+      border-color: rgba(226,179,64,0.55);
+      box-shadow: 0 0 0 3px var(--gold-dim);
+    }
+    .btn {
+      height: 46px;
+      border: 0;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+    .btn.primary {
+      background: var(--gold);
+      color: var(--gold-text);
+    }
+    .btn.primary:hover { filter: brightness(1.05); }
+    .btn.ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .err {
+      min-height: 1.2em;
+      color: var(--danger);
+      font-size: 0.85rem;
+      margin: 0;
+    }
+    .hint {
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: center;
+      line-height: 1.45;
+    }
+
+    /* App shell */
+    #app {
+      height: 100%;
+      display: grid;
+      grid-template-rows: 64px 1fr 88px;
+      grid-template-columns: 232px 1fr;
+      grid-template-areas:
+        "top top"
+        "side main"
+        "player player";
+    }
+    header.top {
+      grid-area: top;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(10,11,14,0.86);
+      backdrop-filter: blur(16px);
+    }
+    .top-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .top-brand .mark { width: 32px; height: 32px; border-radius: 9px; box-shadow: none; }
+    .top-brand .mark svg { width: 16px; height: 16px; display: block; }
+    .top-right { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 0.9rem; }
+    .chip {
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+    }
+    nav.side {
+      grid-area: side;
+      border-right: 1px solid var(--line);
+      padding: 18px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: rgba(18,20,26,0.45);
+    }
+    nav.side button {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 42px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-align: left;
+    }
+    nav.side button:hover { background: var(--bg-hover); color: var(--text); }
+    nav.side button.on {
+      background: var(--gold-dim);
+      color: var(--gold);
+    }
+    main.view {
+      grid-area: main;
+      overflow: auto;
+      padding: 28px 32px 24px;
+    }
+    main.view h2 {
+      margin: 0 0 8px;
+      font-size: 1.7rem;
+      letter-spacing: -0.03em;
+    }
+    main.view .lede {
+      margin: 0 0 28px;
+      color: var(--muted);
+      max-width: 42rem;
+      line-height: 1.5;
+    }
+    .empty {
+      border: 1px dashed var(--line);
+      border-radius: var(--radius);
+      background: rgba(18,20,26,0.55);
+      padding: 48px 28px;
+      text-align: center;
+    }
+    .empty h3 { margin: 0 0 8px; font-size: 1.15rem; }
+    .empty p { margin: 0 auto; color: var(--muted); max-width: 28rem; line-height: 1.5; }
+    .formats {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .formats span {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+    .stat {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .stat b { display: block; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+    .settings-list {
+      display: grid;
+      gap: 12px;
+      max-width: 520px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 18px;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .row span { color: var(--muted); font-size: 0.9rem; }
+    footer.player {
+      grid-area: player;
+      border-top: 1px solid var(--line);
+      background: rgba(18,20,26,0.92);
+      backdrop-filter: blur(16px);
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 16px;
+      padding: 0 22px;
+      padding-bottom: var(--safe-b);
+    }
+    .now {
+      min-width: 0;
+    }
+    .now strong { display: block; font-size: 0.95rem; }
+    .now span { color: var(--muted); font-size: 0.8rem; }
+    .transport { display: flex; align-items: center; gap: 8px; }
+    .transport button, .icon-btn {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: var(--bg-hover);
+      color: var(--text);
+      display: grid; place-items: center;
+    }
+    .transport button.play {
+      width: 48px; height: 48px;
+      background: var(--text);
+      color: var(--bg);
+      border: 0;
+    }
+    .transport button:disabled, .icon-btn:disabled { opacity: 0.38; cursor: default; }
+    .meter {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      justify-content: flex-end;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .bar {
+      width: min(280px, 32vw);
+      height: 4px;
+      border-radius: 99px;
+      background: var(--line);
+      overflow: hidden;
+    }
+    .bar i { display: block; width: 0; height: 100%; background: var(--gold); }
+
+    @media (max-width: 820px) {
+      #app {
+        grid-template-columns: 1fr;
+        grid-template-rows: 56px 1fr 72px 64px;
+        grid-template-areas:
+          "top"
+          "main"
+          "player"
+          "side";
+      }
+      nav.side {
+        flex-direction: row;
+        justify-content: space-around;
+        border-right: 0;
+        border-top: 1px solid var(--line);
+        padding: 8px 8px calc(8px + var(--safe-b));
+      }
+      nav.side button { flex: 1; justify-content: center; height: 44px; font-size: 0.8rem; }
+      main.view { padding: 20px 18px 16px; }
+      footer.player {
+        grid-template-columns: 1fr auto;
+        padding: 8px 16px;
+      }
+      .meter { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <section id="gate">
+    <div class="card">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M13 2 4 14h7l-1 8 10-14h-7z"/></svg>
+        </div>
+        <h1>Gigawatt</h1>
+        <p id="gate-sub">Music on this host</p>
+      </div>
+      <form id="form-setup" class="hidden" autocomplete="on">
+        <label>Username
+          <input id="setup-user" name="username" type="text" autocomplete="username" required minlength="3" maxlength="32">
+        </label>
+        <label>Password
+          <input id="setup-pass" name="password" type="password" autocomplete="new-password" required minlength="8">
+        </label>
+        <label>Confirm password
+          <input id="setup-confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8">
+        </label>
+        <p class="err" id="setup-err"></p>
+        <button class="btn primary" id="setup-btn" type="submit">Create account</button>
+      </form>
+      <form id="form-login" class="hidden" autocomplete="on">
+        <label>Username
+          <input id="login-user" name="username" type="text" autocomplete="username" required>
+        </label>
+        <label>Password
+          <input id="login-pass" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p class="err" id="login-err"></p>
+        <button class="btn primary" id="login-btn" type="submit">Sign in</button>
+      </form>
+      <p class="hint" id="gate-hint"></p>
+    </div>
+  </section>
+
+  <div id="app" class="hidden">
+    <header class="top">
+      <div class="top-brand">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M13 2 4 14h7l-1 8 10-14h-7z"/></svg>
+        </div>
+        Gigawatt
+      </div>
+      <div class="top-right">
+        <span class="chip" id="who">—</span>
+        <button class="btn ghost" id="btn-logout" type="button" style="height:36px;padding:0 12px;">Sign out</button>
+      </div>
+    </header>
+    <nav class="side" aria-label="App">
+      <button type="button" data-view="home" class="on">Home</button>
+      <button type="button" data-view="library">Library</button>
+      <button type="button" data-view="settings">Settings</button>
+    </nav>
+    <main class="view" id="view-home">
+      <h2>Home</h2>
+      <p class="lede">A local music app for this host. Sign-in is on. Playback of MP3, FLAC, and Opus is next.</p>
+      <div class="stats">
+        <div class="stat"><b>Host</b><span id="stat-host">—</span></div>
+        <div class="stat"><b>Address</b><span id="stat-ip">—</span></div>
+        <div class="stat"><b>Version</b><span id="stat-ver">0.1</span></div>
+        <div class="stat"><b>Playback</b><span>Not in V0.1</span></div>
+      </div>
+    </main>
+    <main class="view hidden" id="view-library">
+      <h2>Library</h2>
+      <p class="lede">Files will live on this host. This screen is the shelf — the player is not wired yet.</p>
+      <div class="empty">
+        <h3>No music yet</h3>
+        <p>Drop MP3, FLAC, or Opus onto the host in a later version. The app is here so the shelf and the sign-in are ready first.</p>
+        <div class="formats"><span>MP3</span><span>FLAC</span><span>Opus</span></div>
+      </div>
+    </main>
+    <main class="view hidden" id="view-settings">
+      <h2>Settings</h2>
+      <p class="lede">This account stays on the host. Nothing is sent to the cloud.</p>
+      <div class="settings-list">
+        <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
+        <div class="row"><div>Host name</div><span id="set-host">—</span></div>
+        <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.1</span></div>
+        <div class="row"><div>Audio out</div><span>Coming after V0.1</span></div>
+      </div>
+    </main>
+    <footer class="player">
+      <div class="now">
+        <strong>Nothing playing</strong>
+        <span>Player arrives after this UI</span>
+      </div>
+      <div class="transport">
+        <button type="button" disabled aria-label="Previous">⏮</button>
+        <button type="button" class="play" disabled aria-label="Play">▶</button>
+        <button type="button" disabled aria-label="Next">⏭</button>
+      </div>
+      <div class="meter">
+        <span>0:00</span>
+        <div class="bar" aria-hidden="true"><i></i></div>
+        <span>0:00</span>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const gate = document.getElementById("gate");
+    const app = document.getElementById("app");
+    const formSetup = document.getElementById("form-setup");
+    const formLogin = document.getElementById("form-login");
+
+    async function api(path, opts) {
+      const res = await fetch(path, Object.assign({
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin"
+      }, opts || {}));
+      let data = {};
+      try { data = await res.json(); } catch (_e) {}
+      if (!res.ok) {
+        const err = new Error(data.error || res.statusText);
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    }
+
+    function showView(name) {
+      document.querySelectorAll("main.view").forEach((el) => el.classList.toggle("hidden", el.id !== "view-" + name));
+      document.querySelectorAll("nav.side button").forEach((btn) => btn.classList.toggle("on", btn.dataset.view === name));
+    }
+
+    function paintUser(status) {
+      const name = status.user && status.user.username ? status.user.username : "—";
+      const host = (status.host && status.host.hostname) || "—";
+      const ip = (status.host && status.host.ip) || "—";
+      document.getElementById("who").textContent = name;
+      document.getElementById("set-user").textContent = name;
+      document.getElementById("stat-host").textContent = host;
+      document.getElementById("set-host").textContent = host;
+      document.getElementById("stat-ip").textContent = ip;
+      document.getElementById("set-ip").textContent = ip;
+      document.getElementById("stat-ver").textContent = "V" + (status.version || "0.1");
+    }
+
+    function showApp(status) {
+      gate.classList.add("hidden");
+      app.classList.remove("hidden");
+      paintUser(status);
+    }
+
+    function showGate(status) {
+      app.classList.add("hidden");
+      gate.classList.remove("hidden");
+      const setup = !!status.setup_required;
+      formSetup.classList.toggle("hidden", !setup);
+      formLogin.classList.toggle("hidden", setup);
+      document.getElementById("gate-sub").textContent = setup ? "Create the first account on this host" : "Sign in to this host";
+      document.getElementById("gate-hint").textContent = setup
+        ? "A local account only. Use it on this LAN. Playback of MP3, FLAC, and Opus comes after this UI."
+        : "Gigawatt V0.1 — web app shell. Player is next.";
+    }
+
+    formSetup.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const err = document.getElementById("setup-err");
+      const btn = document.getElementById("setup-btn");
+      err.textContent = "";
+      btn.disabled = true;
+      try {
+        await api("/api/auth/setup", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.getElementById("setup-user").value.trim(),
+            password: document.getElementById("setup-pass").value,
+            confirm: document.getElementById("setup-confirm").value
+          })
+        });
+        const status = await api("/api/auth/status");
+        showApp(status);
+      } catch (e) {
+        err.textContent = e.message || "could not create account";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    formLogin.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const err = document.getElementById("login-err");
+      const btn = document.getElementById("login-btn");
+      err.textContent = "";
+      btn.disabled = true;
+      try {
+        await api("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.getElementById("login-user").value.trim(),
+            password: document.getElementById("login-pass").value
+          })
+        });
+        const status = await api("/api/auth/status");
+        showApp(status);
+      } catch (e) {
+        err.textContent = e.message || "could not sign in";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById("btn-logout").onclick = async () => {
+      try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch (_e) {}
+      showGate({ setup_required: false });
+    };
+
+    document.querySelectorAll("nav.side button").forEach((btn) => {
+      btn.onclick = () => showView(btn.dataset.view);
+    });
+
+    (async () => {
+      try {
+        const status = await api("/api/auth/status");
+        if (status.user) showApp(status);
+        else showGate(status);
+      } catch (_e) {
+        showGate({ setup_required: true });
+        document.getElementById("gate-hint").textContent = "Could not reach the Gigawatt service on this host.";
+      }
+    })();
+  </script>
+</body>
+</html>
