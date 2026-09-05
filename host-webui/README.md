@@ -25,4 +25,5 @@ Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 - `POST /api/tag` — `{name, genre}` (empty genre clears)
 - `POST /api/delete` — `{name}`
 
-Copy `index.html` and `server.py` to `/data/www`.
+Copy the Python modules and `index.html` to `/data/www`. Spotify Connect also needs
+`host-webui/spotify/go-librespot` at `/data/opt/spotify` (or next to `spotify.py`).

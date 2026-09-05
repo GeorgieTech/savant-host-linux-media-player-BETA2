@@ -1,6 +1,11 @@
 #!/bin/sh
 DIR=$(cd "$(dirname "$0")" && pwd)
 export PULSE_SERVER="${PULSE_SERVER:-unix:/var/run/pulse/native}"
+export HOME="${HOME:-/home/RPM}"
 CONF="${SPOTIFY_STATE:-/data/gigawatt/spotify}"
 mkdir -p "$CONF"
+# Pulse cookie is optional; system Pulse on this image often has none.
+if [ -z "$PULSE_COOKIE" ] && [ -f "$HOME/.config/pulse/cookie" ]; then
+  export PULSE_COOKIE="$HOME/.config/pulse/cookie"
+fi
 exec "$DIR/go-librespot" -config_dir "$CONF" "$@"
