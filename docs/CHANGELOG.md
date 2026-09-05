@@ -1,9 +1,14 @@
 # Changelog
 
-## After V0.10 — hot-path cost
+## V0.11 — i.MX6 performance
 
 - Sign-in and TOSLINK skip no longer ffprobe every library file
 - `/api/now` reuses host / RAM / disk for 5 seconds
+- Poll `/api/now` every 1s only while TOSLINK / AirPlay / Spotify / DLNA is live; 5–8s when idle
+- Visualizer rAF runs only on Now Playing (about 10 fps when idle)
+- Library ffprobe cache is LRU and persisted in `/data/gigawatt/library-meta.json`
+- NAS rclone mount uses `--vfs-cache-mode writes` with a 256 MB cap
+- EQ sliders apply to TOSLINK on release / leaving the page, not on every drag
 - Notes: `docs/V010_DEBUG_NOTES.txt`, `docs/PERFORMANCE_RECOMMENDATIONS.txt`
 
 ## V0.10 — TOSLINK EQ

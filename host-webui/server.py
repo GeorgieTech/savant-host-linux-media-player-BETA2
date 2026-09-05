@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.10 — library, NAS browse, browser or TOSLINK EQ, AirPlay, DLNA, Spotify."""
+"""Gigawatt V0.11 — library, NAS browse, browser or TOSLINK EQ, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import OrderedDict
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, unquote
@@ -29,7 +30,9 @@ STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
-VERSION = "0.10"
+PROBE_META_FILE = os.path.join(STATE_DIR, "library-meta.json")
+PROBE_CACHE_MAX = 800
+VERSION = "0.11"
 OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 SPOTIFY_DIR = os.environ.get("SPOTIFY_DIR", "/data/opt/spotify")
@@ -83,7 +86,11 @@ MIME = {
 
 LOCK = threading.Lock()
 SESSIONS = {}
-PROBE_CACHE = {}
+PROBE_CACHE = OrderedDict()
+_PROBE_LOCK = threading.Lock()
+_PROBE_DIRTY = False
+_PROBE_LOADED = False
+_PLAYER = None
 _INVENTORY = {"t": 0.0, "ident": None, "mem": None, "disk": None}
 AIRPLAY = None
 HOST = None
@@ -338,7 +345,16 @@ def _clamp_eq(values):
     return out
 
 
+def _copy_player(data):
+    out = dict(data)
+    out["eq"] = list(data.get("eq") or [0] * EQ_BANDS)
+    return out
+
+
 def load_player():
+    global _PLAYER
+    if _PLAYER is not None:
+        return _copy_player(_PLAYER)
     try:
         with open(PLAYER_FILE, "r") as fh:
             data = json.load(fh)
@@ -352,7 +368,7 @@ def load_player():
     name = sanitize_name(data.get("airplay_name")) or DEFAULT_NAME
     dlna_name = sanitize_name(data.get("dlna_name")) or DEFAULT_NAME
     spotify_name = sanitize_name(data.get("spotify_name")) or DEFAULT_NAME
-    return {
+    parsed = {
         "volume": _clamp_int(data.get("volume"), 0, 100, 80),
         "eq": _clamp_eq(data.get("eq")),
         "airplay": bool(data.get("airplay")),
@@ -363,6 +379,8 @@ def load_player():
         "spotify_name": spotify_name,
         "output": out,
     }
+    _PLAYER = _copy_player(parsed)
+    return parsed
 
 
 def save_player(
@@ -376,6 +394,7 @@ def save_player(
     spotify_name=None,
     output=None,
 ):
+    global _PLAYER
     current = load_player()
     if volume is not None:
         current["volume"] = _clamp_int(volume, 0, 100, current["volume"])
@@ -407,6 +426,7 @@ def save_player(
         json.dump(current, fh, indent=2)
         fh.write("\n")
     os.replace(tmp, PLAYER_FILE)
+    _PLAYER = _copy_player(current)
     return current
 
 
@@ -686,11 +706,72 @@ def fmt_bitrate(value):
     return "%d kb/s" % int(round(bps / 1000.0))
 
 
-def probe_audio(full, size, mtime):
-    key = (full, size, mtime)
-    cached = PROBE_CACHE.get(key)
-    if cached is not None:
-        return cached
+def _probe_key(rel, size, mtime):
+    return "%s|%s|%s" % (rel or "", int(size or 0), int(mtime or 0))
+
+
+def load_probe_cache():
+    global _PROBE_LOADED
+    with _PROBE_LOCK:
+        if _PROBE_LOADED:
+            return
+        _PROBE_LOADED = True
+        try:
+            with open(PROBE_META_FILE, "r") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return
+        items = data.get("probes") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return
+
+        def _safe_int(value):
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        for item in items[-PROBE_CACHE_MAX:]:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("k")
+            info = item.get("v")
+            if not key or not isinstance(info, dict):
+                continue
+            PROBE_CACHE[key] = {
+                "sample_rate": _safe_int(info.get("sample_rate")),
+                "bit_rate": _safe_int(info.get("bit_rate")),
+                "hz": info.get("hz") or "",
+                "bitrate": info.get("bitrate") or "",
+            }
+
+
+def save_probe_cache():
+    global _PROBE_DIRTY
+    with _PROBE_LOCK:
+        if not _PROBE_DIRTY:
+            return
+        items = [{"k": key, "v": info} for key, info in PROBE_CACHE.items()]
+        _PROBE_DIRTY = False
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        tmp = PROBE_META_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"probes": items}, fh, separators=(",", ":"))
+        os.replace(tmp, PROBE_META_FILE)
+    except OSError:
+        with _PROBE_LOCK:
+            _PROBE_DIRTY = True
+
+
+def probe_audio(full, size, mtime, rel=""):
+    load_probe_cache()
+    key = _probe_key(rel or os.path.basename(full), size, mtime)
+    with _PROBE_LOCK:
+        cached = PROBE_CACHE.get(key)
+        if cached is not None:
+            PROBE_CACHE.move_to_end(key)
+            return dict(cached)
     info = {"sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""}
     try:
         raw = subprocess.check_output(
@@ -727,10 +808,13 @@ def probe_audio(full, size, mtime):
         info["bitrate"] = fmt_bitrate(info["bit_rate"])
     except Exception:
         pass
-    PROBE_CACHE[key] = info
-    if len(PROBE_CACHE) > 400:
-        PROBE_CACHE.clear()
+    global _PROBE_DIRTY
+    with _PROBE_LOCK:
         PROBE_CACHE[key] = info
+        PROBE_CACHE.move_to_end(key)
+        while len(PROBE_CACHE) > PROBE_CACHE_MAX:
+            PROBE_CACHE.popitem(last=False)
+        _PROBE_DIRTY = True
     return info
 
 
@@ -760,7 +844,7 @@ def list_tracks(root=None, probe=True, origin="local"):
                 size = 0
                 mtime = 0
             if probe and size:
-                info = probe_audio(full, size, mtime)
+                info = probe_audio(full, size, mtime, rel)
             else:
                 info = {"sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""}
             artist, album, title = parse_nas_meta(rel) if origin == "nas" else ("", "", pretty_title(rel))
@@ -786,6 +870,8 @@ def list_tracks(root=None, probe=True, origin="local"):
         if origin == "nas" and count >= NAS_TRACK_CAP:
             break
     tracks.sort(key=lambda t: t["title"].lower())
+    if probe:
+        save_probe_cache()
     return tracks
 
 

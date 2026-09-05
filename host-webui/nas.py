@@ -149,6 +149,11 @@ class NasShare:
                 pass
             env = self._env()
             remote = self._remote_path_locked()
+            cache_dir = os.path.join(self.state_dir, "rclone-vfs")
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+            except OSError:
+                pass
             cmd = [
                 os.path.join(self.directory, "rclone"),
                 "mount",
@@ -157,11 +162,17 @@ class NasShare:
                 "--config",
                 self._conf_path(),
                 "--vfs-cache-mode",
-                "off",
+                "writes",
+                "--vfs-read-ahead",
+                "8M",
                 "--dir-cache-time",
-                "30s",
+                "5m",
                 "--attr-timeout",
-                "2s",
+                "10s",
+                "--vfs-cache-max-size",
+                "256M",
+                "--cache-dir",
+                cache_dir,
                 "--timeout",
                 "30s",
                 "--contimeout",

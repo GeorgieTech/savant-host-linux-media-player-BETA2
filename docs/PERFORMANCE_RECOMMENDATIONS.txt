@@ -10,84 +10,27 @@ they sound. Do not add Node, a second web framework, or HTTPS
 termination until these are done.
 
 
-Already done in this branch
----------------------------
+Already done
+------------
 1. TOSLINK “next track” no longer ffprobes the whole library.
 2. Sign-in /api/auth/status no longer ffprobes every file.
 3. /api/now caches host IP, RAM, and disk for 5 seconds.
+4. /api/now polls at 1s only while transport is live; 5–8s when idle.
+5. Visualizer rAF only on Now Playing (idle ~10 fps).
+6. Library probes are LRU (800) and persisted to library-meta.json.
+7. rclone --vfs-cache-mode writes, 256 MB cap, 5m dir cache.
+8. EQ POSTs on slider release / leaving the EQ page, not every drag.
 
 On this VM, 13 files: probe 423 ms vs 0.1 ms without probe.
 On the A9, that gap is the difference between a snappy skip and
 a multi-second hitch.
 
 
-Do these next (largest wins)
-----------------------------
-
-A. Stop polling the host like a desktop
-   index.html hits GET /api/now every 1s while signed in, on every
-   page. Each call still does: load player.json, host snapshot,
-   AirPlay (and pactl when AirPlay is on but idle), DLNA, Spotify
-   HTTP to 127.0.0.1:3678, NAS /proc/mounts.
-
-   Change:
-   - 1s only while TOSLINK / AirPlay / Spotify / DLNA is live.
-   - 5–10s on Settings / Library / EQ when idle.
-   - Stop the timer on the login gate (already does).
-   - Split “now playing” from “inventory”. Settings RAM/disk does
-     not need to ride the transport poll.
-
-   Why: four background watchers already exist (HostPlayer,
-   AirPlay, Spotify, DLNA). The browser does not need to wake
-   Pulse and go-librespot every second while you browse artists.
-
-B. Pause the visualizer
-   requestAnimationFrame(tick) runs from boot of the app shell,
-   even on Library / NAS / Settings. 60 fps canvas + analyser
-   on an A9 while ffmpeg is decoding is wasted work.
-
-   Change: run rAF only on the Now Playing view, or drop to
-   8–12 fps when nothing is playing.
-
-C. Make library metadata cheap
-   GET /api/library still ffprobes every uncached file (4s
-   timeout each). PROBE_CACHE dies at 400 entries and then
-   wipes itself.
-
-   Change:
-   - Persist probes in /data/gigawatt/library-meta.json
-     keyed by (rel, size, mtime).
-   - LRU in memory, do not clear the whole map.
-   - Probe in a background thread after a fast unprobed list.
-   - Or skip probe unless the user opens a track row.
-
-D. rclone cache for NAS
-   Current mount: --vfs-cache-mode off, --dir-cache-time 30s,
-   --attr-timeout 2s. Every album open and every TOSLINK read
-   goes to SMB. FUSE + no cache is the slowest option rclone
-   has.
-
-   Change (safe on 3.1 GB /data):
-     --vfs-cache-mode writes
-     --vfs-read-ahead 8M
-     --dir-cache-time 5m
-     --attr-timeout 10s
-     --vfs-cache-max-size 256M
-   Keep the cache on /data (or /tmp if you accept reboot loss).
-   Do not use full --vfs-cache-mode full on this partition
-   without a size cap.
-
-E. Stop restarting ffmpeg to change EQ
-   HostPlayer.set_eq() kills the pipeline and seeks back. That
-   is a decode restart + Pulse reopen on every slider settle.
-
-   Better: Pulse module-equalizer-sink or a single long-lived
-   ffmpeg/paplay with a FIFO of updated filter coeffs (harder).
-   Next-best: apply EQ only when the user leaves the EQ page
-   or taps a preset, not on every 0.5 dB drag.
+Do these next
+-------------
 
 F. Match TOSLINK instead of 48 kHz WAV
-   Playback is: ffmpeg -ac 2 -ar 48000 -f wav | paplay.
+   Playback is still: ffmpeg -ac 2 -ar 48000 -f wav | paplay.
    The jack is reported as 24-bit 96 kHz. Pulse then resamples
    48k → 96k. Two resamples + uncompressed WAV on a pipe is
    extra CPU.
@@ -102,8 +45,8 @@ F. Match TOSLINK instead of 48 kHz WAV
 
 Worth doing, smaller
 --------------------
-G. load_player() on every /api/now reads player.json. Keep the
-   last save_player() result in memory; write-through on change.
+G. load_player() write-through cache is in (in-memory last save).
+   AirPlay/Spotify snapshot caching is still open:
 
 H. AirPlay snapshot should not run `pactl list sink-inputs`
    on every /api/now. The metadata thread already knows pbeg.
@@ -136,12 +79,7 @@ Do not upgrade yet
 
 Suggested order on 192.168.1.178
 --------------------------------
-1. Deploy this branch (skip probe + /api/now inventory cache).
-2. Confirm TOSLINK skip and sign-in feel faster with a 50+
-   file library.
-3. Slow /api/now + pause the visualizer (client + one route).
-4. rclone vfs-cache-mode writes with a size cap.
-5. Pulse EQ or “apply EQ on release” so sliders do not restart
-   ffmpeg.
-6. Measure ffmpeg/paplay CPU and try 96 kHz s24le if TOSLINK
-   is the main output.
+1. Deploy these client/server cuts (poll, viz, probe LRU, rclone writes, EQ on release).
+2. Remount NAS from Settings so rclone picks up vfs-cache-mode writes.
+3. Confirm TOSLINK skip, sign-in, and Library stay snappy with 50+ files.
+4. Measure ffmpeg/paplay CPU and try 96 kHz s24le if TOSLINK is the main output.

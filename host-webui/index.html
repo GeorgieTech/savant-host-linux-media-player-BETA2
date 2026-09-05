@@ -931,7 +931,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.10</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.11</span></div>
         <h3 class="set-h">Internal</h3>
         <div class="row res-row">
           <div class="res-top"><div>Memory</div><span id="mem-left">—</span></div>
@@ -1151,6 +1151,10 @@
     let volTimer = null;
     let eqTimer = null;
     let airplayTimer = null;
+    let airplayGen = 0;
+    let nowView = "home";
+    let vizRaf = 0;
+    let vizIdle = 0;
 
     async function api(path, opts) {
       const res = await fetch(path, Object.assign({
@@ -1169,9 +1173,17 @@
 
     function showView(name) {
       if (name === "nas" && !(state.nas && state.nas.mounted)) name = "home";
+      const prev = nowView;
+      nowView = name;
       document.querySelectorAll("main.view").forEach((el) => el.classList.toggle("hidden", el.id !== "view-" + name));
       document.querySelectorAll("nav.side button").forEach((btn) => btn.classList.toggle("on", btn.dataset.view === name));
-      if (name === "home") requestAnimationFrame(resize);
+      if (prev === "eq" && name !== "eq") persistEqNow();
+      if (name === "home") {
+        requestAnimationFrame(resize);
+        startViz();
+      } else {
+        stopViz();
+      }
       if (name === "eq") {
         paintEq();
         ensureAudio();
@@ -1907,7 +1919,12 @@
       });
       paintEqPresets();
       if (!persist) return;
+      persistEqNow();
+    }
+
+    function persistEqNow() {
       if (eqTimer) clearTimeout(eqTimer);
+      const next = state.eq.slice();
       eqTimer = setTimeout(() => {
         api("/api/eq", { method: "POST", body: JSON.stringify({ eq: next }) }).catch(() => {});
       }, 80);
@@ -1936,6 +1953,11 @@
         input.value = String(state.eq[i] || 0);
         input.setAttribute("aria-label", band.label + " Hz");
         input.oninput = () => {
+          const next = state.eq.slice();
+          next[i] = Number(input.value);
+          applyEqGains(next, false);
+        };
+        input.onchange = () => {
           const next = state.eq.slice();
           next[i] = Number(input.value);
           applyEqGains(next, true);
@@ -2092,6 +2114,8 @@
     window.addEventListener("resize", resize);
 
     function tick(ts) {
+      vizRaf = 0;
+      if (nowView !== "home") return;
       const w = canvas.clientWidth || 1;
       const h = canvas.clientHeight || 1;
       if (canvas.width === 0) resize();
@@ -2141,7 +2165,28 @@
       ctx.arc(cx, cy, 18 + energy * 26, 0, Math.PI * 2);
       ctx.fillStyle = (state.playing || airplayOn() || (state.host && state.host.playing)) ? "rgba(226,179,64," + (0.12 + energy * 0.18) + ")" : "rgba(255,255,255,0.04)";
       ctx.fill();
-      requestAnimationFrame(tick);
+      const live = state.playing || airplayOn() || (state.output === "optical" && state.host && state.host.playing);
+      if (live) {
+        vizRaf = requestAnimationFrame(tick);
+      } else {
+        vizIdle = setTimeout(() => {
+          vizIdle = 0;
+          vizRaf = requestAnimationFrame(tick);
+        }, 100);
+      }
+    }
+
+    function startViz() {
+      if (nowView !== "home") return;
+      if (vizRaf || vizIdle) return;
+      vizRaf = requestAnimationFrame(tick);
+    }
+
+    function stopViz() {
+      if (vizRaf) cancelAnimationFrame(vizRaf);
+      if (vizIdle) clearTimeout(vizIdle);
+      vizRaf = 0;
+      vizIdle = 0;
     }
 
     function showApp(status) {
@@ -2162,25 +2207,47 @@
       if (status.nas && status.nas.mounted) loadNasBrowse("", { view: "artists" });
       paintOutputSettings();
       startAirplayPoll();
+      startViz();
       resize();
+    }
+
+    function transportLive() {
+      const host = state.host || {};
+      const ap = state.airplay || {};
+      const sp = state.spotify || {};
+      const dl = state.dlna || {};
+      return !!(host.playing || host.paused || ap.active || sp.active || dl.active);
+    }
+
+    function nowPollMs() {
+      if (transportLive()) return 1000;
+      if (nowView === "home") return 5000;
+      return 8000;
     }
 
     function startAirplayPoll() {
       stopAirplayPoll();
-      airplayTimer = setInterval(async () => {
+      const gen = ++airplayGen;
+      const loop = async () => {
+        if (gen !== airplayGen) return;
         try { applyNow(await api("/api/now")); } catch (_e) {}
-      }, 1000);
+        if (gen !== airplayGen) return;
+        airplayTimer = setTimeout(loop, nowPollMs());
+      };
+      airplayTimer = setTimeout(loop, 0);
     }
 
     function stopAirplayPoll() {
+      airplayGen += 1;
       if (airplayTimer) {
-        clearInterval(airplayTimer);
+        clearTimeout(airplayTimer);
         airplayTimer = null;
       }
     }
 
     function showGate(status) {
       stopAirplayPoll();
+      stopViz();
       app.classList.add("hidden");
       gate.classList.remove("hidden");
       const setup = !!status.setup_required;
@@ -2592,7 +2659,6 @@
     });
 
     (async () => {
-      requestAnimationFrame(tick);
       try {
         const status = await api("/api/auth/status");
         if (status.user) showApp(status);

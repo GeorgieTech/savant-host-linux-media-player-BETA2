@@ -1,4 +1,4 @@
-# host-webui (Gigawatt V0.10)
+# host-webui (Gigawatt V0.11)
 
 Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 

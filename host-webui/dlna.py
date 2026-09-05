@@ -21,7 +21,7 @@ SSDP_PORT = 1900
 HTTP_PORT = 49494
 NS_SOAP = "http://schemas.xmlsoap.org/soap/envelope/"
 NS_UPNP_ERR = "urn:schemas-upnp-org:control-1-0"
-UPNP_SERVER = "Linux/4.14 UPnP/1.0 Gigawatt/0.10"
+UPNP_SERVER = "Linux/4.14 UPnP/1.0 Gigawatt/0.11"
 TRANSPORT_ACTIONS = "Play,Pause,Stop,Seek,Next,Previous"
 SINK = ",".join(
     [
@@ -558,7 +558,7 @@ class DlnaRenderer:
     <friendlyName>%s</friendlyName>
     <manufacturer>Gigawatt</manufacturer>
     <modelName>Gigawatt</modelName>
-    <modelNumber>0.10</modelNumber>
+    <modelNumber>0.11</modelNumber>
     <UDN>%s</UDN>
     <dlna:X_DLNADOC>DMR-1.50</dlna:X_DLNADOC>
     <serviceList>
