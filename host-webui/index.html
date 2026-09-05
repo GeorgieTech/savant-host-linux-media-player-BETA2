@@ -204,6 +204,21 @@
       max-width: 42rem;
       line-height: 1.5;
     }
+    #view-home h2 { margin-bottom: 10px; }
+    .quote {
+      margin: 0 0 28px;
+      max-width: 34rem;
+      color: var(--text);
+      font-size: 1.12rem;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      line-height: 1.45;
+    }
+    .quote em {
+      font-style: italic;
+      font-weight: 500;
+      color: var(--muted);
+    }
     .stage {
       position: relative;
       min-height: 320px;
@@ -442,7 +457,7 @@
     </nav>
     <main class="view" id="view-home">
       <h2>Home</h2>
-      <p class="lede">Play from this host in the browser. The stage below is the now-playing visual.</p>
+      <p class="quote"><em>Keep the file. Play it back. That is freedom of media.</em></p>
       <div class="stage">
         <canvas id="viz" aria-hidden="true"></canvas>
         <div class="stage-copy">
@@ -450,12 +465,6 @@
           <h3 id="home-title">Nothing playing</h3>
           <p id="home-sub">Open Library and tap a track</p>
         </div>
-      </div>
-      <div class="stats">
-        <div class="stat"><b>Host</b><span id="stat-host">—</span></div>
-        <div class="stat"><b>Address</b><span id="stat-ip">—</span></div>
-        <div class="stat"><b>Version</b><span id="stat-ver">0.2</span></div>
-        <div class="stat"><b>Output</b><span>This browser</span></div>
       </div>
     </main>
     <main class="view hidden" id="view-library">
@@ -552,11 +561,16 @@
       const ip = (status.host && status.host.ip) || "—";
       document.getElementById("who").textContent = name;
       document.getElementById("set-user").textContent = name;
-      document.getElementById("stat-host").textContent = host;
       document.getElementById("set-host").textContent = host;
-      document.getElementById("stat-ip").textContent = ip;
       document.getElementById("set-ip").textContent = ip;
-      document.getElementById("stat-ver").textContent = "V" + (status.version || "0.2");
+    }
+
+    function formatMeta(track) {
+      if (!track) return "";
+      const parts = [(track.ext || "").toUpperCase()];
+      if (track.bitrate) parts.push(track.bitrate);
+      if (track.hz) parts.push(track.hz);
+      return parts.filter(Boolean).join(" · ");
     }
 
     function paintLibrary() {
@@ -568,9 +582,9 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "track" + (i === state.index ? " on" : "");
-        btn.innerHTML = "<span class=\"n\">" + String(i + 1).padStart(2, "0") + "</span><span><strong></strong><em></em></span><em></em>";
+        btn.innerHTML = "<span class=\"n\">" + String(i + 1).padStart(2, "0") + "</span><span><strong></strong></span><em></em>";
         btn.querySelector("strong").textContent = track.title;
-        btn.querySelector("span em").textContent = track.ext;
+        btn.querySelector("em").textContent = formatMeta(track);
         btn.onclick = () => playIndex(i);
         list.appendChild(btn);
       });
@@ -579,11 +593,12 @@
     function paintNow() {
       const track = currentTrack();
       const title = track ? track.title : "Nothing playing";
-      const sub = track ? (state.playing ? "Playing · this browser" : "Paused · this browser") : "This browser";
+      const meta = formatMeta(track);
+      const sub = track ? meta : "This browser";
       document.getElementById("now-title").textContent = title;
       document.getElementById("now-sub").textContent = sub;
       document.getElementById("home-title").textContent = title;
-      document.getElementById("home-sub").textContent = track ? (track.ext.toUpperCase() + " · on this host") : "Open Library and tap a track";
+      document.getElementById("home-sub").textContent = track ? meta : "Open Library and tap a track";
       document.getElementById("home-kicker").textContent = state.playing ? "Now playing" : (track ? "Paused" : "Standby");
       document.getElementById("btn-play").textContent = state.playing ? "❚❚" : "▶";
       document.getElementById("btn-play").disabled = !track;

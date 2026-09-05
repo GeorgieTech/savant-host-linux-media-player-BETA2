@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -36,6 +37,7 @@ MIME = {
 
 LOCK = threading.Lock()
 SESSIONS = {}
+PROBE_CACHE = {}
 
 
 def _now():
@@ -132,6 +134,76 @@ def pretty_title(name):
     return re.sub(r"\s+", " ", base).strip() or name
 
 
+def fmt_hz(value):
+    try:
+        hz = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if hz <= 0:
+        return ""
+    if hz % 1000 == 0:
+        return "%d kHz" % (hz // 1000)
+    return ("%0.1f kHz" % (hz / 1000.0)).replace(".0 kHz", " kHz")
+
+
+def fmt_bitrate(value):
+    try:
+        bps = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if bps <= 0:
+        return ""
+    return "%d kb/s" % int(round(bps / 1000.0))
+
+
+def probe_audio(full, size, mtime):
+    key = (full, size, mtime)
+    cached = PROBE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    info = {"sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""}
+    try:
+        raw = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=sample_rate,bit_rate",
+                "-show_entries",
+                "format=bit_rate",
+                "-of",
+                "json",
+                full,
+            ],
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+        data = json.loads(raw.decode("utf-8") or "{}")
+        streams = data.get("streams") or []
+        stream = streams[0] if streams else {}
+        fmt = data.get("format") or {}
+        def _int(value):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
+        info["sample_rate"] = _int(stream.get("sample_rate"))
+        info["bit_rate"] = _int(stream.get("bit_rate")) or _int(fmt.get("bit_rate"))
+        info["hz"] = fmt_hz(info["sample_rate"])
+        info["bitrate"] = fmt_bitrate(info["bit_rate"])
+    except Exception:
+        pass
+    PROBE_CACHE[key] = info
+    if len(PROBE_CACHE) > 400:
+        PROBE_CACHE.clear()
+        PROBE_CACHE[key] = info
+    return info
+
+
 def list_tracks():
     root = os.path.realpath(MUSIC_DIR)
     tracks = []
@@ -149,15 +221,25 @@ def list_tracks():
             if rel.startswith("."):
                 continue
             try:
-                size = os.path.getsize(full)
+                st = os.stat(full)
+                size = st.st_size
+                mtime = int(st.st_mtime)
             except OSError:
                 size = 0
+                mtime = 0
+            probe = probe_audio(full, size, mtime) if size else {
+                "sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""
+            }
             tracks.append(
                 {
                     "name": rel,
                     "title": pretty_title(rel),
                     "ext": ext.lstrip("."),
                     "bytes": size,
+                    "sample_rate": probe["sample_rate"],
+                    "bit_rate": probe["bit_rate"],
+                    "hz": probe["hz"],
+                    "bitrate": probe["bitrate"],
                 }
             )
     tracks.sort(key=lambda t: t["title"].lower())
