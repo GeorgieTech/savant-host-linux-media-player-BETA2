@@ -1,0 +1,17 @@
+[Unit]
+Description=Gigawatt PulseAudio (TOSLINK)
+After=sound.target
+Before=host-webui.service
+Wants=sound.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pulseaudio --daemonize=no --system --log-target=journal --disallow-exit --exit-idle-time=-1 --log-level=info -n --file=/etc/pulse/savant-vcd.pa
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=30
+TimeoutStopSec=10
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_ADMIN CAP_KILL CAP_SYS_MODULE CAP_IPC_LOCK CAP_IPC_OWNER CAP_LEASE CAP_SYS_RAWIO CAP_CHOWN CAP_DAC_OVERRIDE CAP_SYS_RESOURCE CAP_SYS_NICE CAP_FOWNER CAP_SETGID CAP_SETUID
+
+[Install]
+WantedBy=multi-user.target

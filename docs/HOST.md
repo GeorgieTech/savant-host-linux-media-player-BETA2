@@ -34,4 +34,6 @@ Do **not** use **192.168.1.40**. Do not deploy this tree to **192.168.1.180**.
 
 Savant `startupManager` is **masked** for Gigawatt. Default target is `multi-user.target`. nginx is stopped/masked so port 80 is the Python UI.
 
-The factory hostname was `sav-` plus the unit id. It is now `GWH-001aae0733360000` via `hostnamectl` and `/etc/hostname`. Keep Savant masked; the old launcher used to force the `sav-` name at boot.
+The factory hostname was `sav-` plus the unit id. `savant-init.service` still writes `sav-<uid>` into `/etc/hostname` on every boot. Gigawatt pins `GWH-<uid>` afterward via `gigawatt-hostname.service` (`/data/www/pin-hostname.sh`). Keep Savant’s launcher masked.
+
+PulseAudio is the TOSLINK path. The stock `pulseaudio.service` is disabled and tied to a user socket, so a power cut left no `/var/run/pulse/native` and AirPlay failed to restore. `gigawatt-pulse.service` starts the system daemon (`savant-vcd.pa`) before the web UI.

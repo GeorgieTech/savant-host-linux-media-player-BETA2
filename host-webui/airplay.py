@@ -9,6 +9,7 @@ import threading
 import time
 
 META_PIPE = "/tmp/gigawatt-airplay.meta"
+PULSE_SOCK = "/var/run/pulse/native"
 NAME_RE = re.compile(r"^[A-Za-z0-9._ -]{1,50}$")
 DEFAULT_NAME = "Gigawatt"
 
@@ -85,6 +86,26 @@ def _decode_payload(b64):
     return text.strip()
 
 
+def _pulse_sock_path():
+    raw = os.environ.get("PULSE_SERVER") or ("unix:" + PULSE_SOCK)
+    if raw.startswith("unix:"):
+        return raw[5:] or PULSE_SOCK
+    if raw.startswith("/"):
+        return raw
+    return PULSE_SOCK
+
+
+def pulse_ready(timeout=0.0):
+    path = _pulse_sock_path()
+    deadline = time.time() + max(0.0, float(timeout))
+    while True:
+        if os.path.exists(path):
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.2)
+
+
 def _pulse_airplay_playing():
     try:
         out = subprocess.check_output(
@@ -113,6 +134,7 @@ class AirPlay:
         self.error = ""
         self.name = sanitize_name(name) or DEFAULT_NAME
         self._meta_fh = None
+        self._keeper = False
         try:
             self._write_conf()
         except Exception:
@@ -133,16 +155,19 @@ class AirPlay:
             title = self.title
             if self.active and not title:
                 title = "AirPlay"
+            err = self.error
+            if self.enabled and not running and not err:
+                err = "starting"
             return {
                 "available": self.available(),
-                "enabled": bool(self.enabled and running),
+                "enabled": bool(self.enabled),
                 "active": bool(self.active and running),
                 "name": self.name,
                 "title": title,
                 "artist": self.artist,
                 "album": self.album,
                 "client": self.client,
-                "error": self.error,
+                "error": err,
             }
 
     def set_name(self, name):
@@ -176,10 +201,30 @@ class AirPlay:
         with self.lock:
             self.enabled = want
             if want:
-                return self._start_locked()
+                ok = self._start_locked()
+                self._ensure_keeper_locked()
+                return ok
             self._stop_locked()
             self.error = ""
             return True
+
+    def _ensure_keeper_locked(self):
+        if self._keeper:
+            return
+        self._keeper = True
+        threading.Thread(target=self._keep_alive, daemon=True).start()
+
+    def _keep_alive(self):
+        while True:
+            time.sleep(2)
+            with self.lock:
+                if not self.enabled:
+                    self._keeper = False
+                    return
+                alive = self.proc is not None and self.proc.poll() is None
+                if alive:
+                    continue
+                self._start_locked()
 
     def bounce(self):
         """Drop an in-progress AirPlay session but keep advertising if enabled."""
@@ -210,13 +255,16 @@ class AirPlay:
         if self.proc is not None and self.proc.poll() is None:
             self.error = ""
             return True
+        if not pulse_ready(0):
+            self.error = "waiting for PulseAudio"
+            return False
         try:
             self._ensure_fifo()
         except Exception as exc:
             self.error = "metadata pipe: %s" % exc
             return False
         env = os.environ.copy()
-        env["PULSE_SERVER"] = env.get("PULSE_SERVER") or "unix:/var/run/pulse/native"
+        env["PULSE_SERVER"] = env.get("PULSE_SERVER") or ("unix:" + PULSE_SOCK)
         cmd = os.path.join(self.directory, "run-shairport")
         try:
             self.proc = subprocess.Popen(

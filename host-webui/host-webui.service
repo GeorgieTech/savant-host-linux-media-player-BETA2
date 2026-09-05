@@ -1,7 +1,7 @@
 [Unit]
 Description=Gigawatt Beta2 web UI
-After=network-online.target
-Wants=network-online.target
+After=network-online.target gigawatt-pulse.service gigawatt-hostname.service
+Wants=network-online.target gigawatt-pulse.service gigawatt-hostname.service
 
 [Service]
 Type=simple

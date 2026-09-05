@@ -1,0 +1,13 @@
+[Unit]
+Description=Gigawatt hostname pin
+After=savant-init.service
+Before=network-pre.target avahi-daemon.service host-webui.service
+Wants=savant-init.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /data/www/pin-hostname.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -8,13 +8,13 @@ This project is **not affiliated with Savant Systems**.
 
 **Do not use 192.168.1.40** (live Carrillos Resident Savant). Beta1 stays on **192.168.1.180**. This tree is **192.168.1.178** only.
 
-## Current status — V0.11
+## Current status — V0.13
 
 Target: **192.168.1.178** (`GWH-001aae0733360000`)
 
 Live UI: [http://192.168.1.178/](http://192.168.1.178/)
 
-V0.11 cuts i.MX6 load: slower `/api/now` when idle, visualizer only on Now Playing, persisted library probes, rclone VFS cache, EQ applied on release.
+V0.13 pins hostname `GWH-<uid>` after Savant init, starts Pulse at boot, and restores AirPlay On after a power cut. AirPlay stays **AirPlay 1**.
 
 | Piece | State |
 |---|---|

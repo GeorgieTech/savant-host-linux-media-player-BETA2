@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.11 — library, NAS browse, browser or TOSLINK EQ, AirPlay, DLNA, Spotify."""
+"""Gigawatt V0.13 — library, NAS browse, browser or TOSLINK EQ, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -32,7 +32,7 @@ LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
 PROBE_META_FILE = os.path.join(STATE_DIR, "library-meta.json")
 PROBE_CACHE_MAX = 800
-VERSION = "0.11"
+VERSION = "0.13"
 OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 SPOTIFY_DIR = os.environ.get("SPOTIFY_DIR", "/data/opt/spotify")
@@ -92,6 +92,7 @@ _PROBE_DIRTY = False
 _PROBE_LOADED = False
 _PLAYER = None
 _INVENTORY = {"t": 0.0, "ident": None, "mem": None, "disk": None}
+_REBOOTING = False
 AIRPLAY = None
 HOST = None
 DLNA = None
@@ -252,6 +253,52 @@ def new_session(username):
     token = secrets.token_urlsafe(32)
     SESSIONS[token] = {"username": username, "created": _now()}
     return token
+
+
+def drop_other_sessions(keep_token):
+    keep = SESSIONS.get(keep_token) if keep_token else None
+    SESSIONS.clear()
+    if keep_token and keep:
+        SESSIONS[keep_token] = keep
+
+
+def schedule_reboot():
+    """Reboot the appliance. Does not write users, player, NAS, or library files."""
+    global _REBOOTING
+    with LOCK:
+        if _REBOOTING:
+            return True
+        _REBOOTING = True
+
+    def _go():
+        try:
+            os.sync()
+        except Exception:
+            pass
+        cmds = (
+            ["sudo", "-n", "/sbin/reboot"],
+            ["sudo", "-n", "/bin/systemctl", "reboot"],
+        )
+        for cmd in cmds:
+            try:
+                subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                print("Gigawatt host reboot requested", flush=True)
+                return
+            except Exception as exc:
+                print("reboot failed (%s): %s" % (" ".join(cmd), exc), flush=True)
+        global _REBOOTING
+        with LOCK:
+            _REBOOTING = False
+
+    timer = threading.Timer(0.6, _go)
+    timer.daemon = True
+    timer.start()
+    return True
 
 
 def session_user(token):
@@ -1285,6 +1332,15 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if path == "/api/auth/password":
+            self._change_password(data)
+            return
+        if path in ("/api/host/reboot", "/api/host/reset"):
+            if not self._need_user():
+                return
+            schedule_reboot()
+            self._json(200, {"ok": True, "rebooting": True})
+            return
         if path == "/api/volume":
             if not self._need_user():
                 return
@@ -1571,6 +1627,41 @@ class Handler(SimpleHTTPRequestHandler):
             real_name = user["username"]
         self._auth_ok(real_name, token, created=False)
 
+    def _change_password(self, data):
+        username = self._need_user()
+        if not username:
+            return
+        current = str(data.get("current") or data.get("old") or "")
+        password = str(data.get("password") or data.get("new") or "")
+        confirm = str(data.get("confirm") or password)
+        if not current:
+            self._json(400, {"ok": False, "error": "enter your current password"})
+            return
+        error = _validate_password(password, confirm)
+        if error:
+            self._json(400, {"ok": False, "error": error})
+            return
+        if current == password:
+            self._json(400, {"ok": False, "error": "choose a different password"})
+            return
+        with LOCK:
+            users = load_users()
+            user = find_user(users, username)
+            if not user:
+                self._json(401, {"ok": False, "error": "sign in first"})
+                return
+            _salt, digest = hash_password(current, user.get("salt") or "")
+            stored = str(user.get("hash") or "")
+            if len(digest) != len(stored) or not secrets.compare_digest(digest, stored):
+                self._json(401, {"ok": False, "error": "current password is wrong"})
+                return
+            salt, new_digest = hash_password(password)
+            user["salt"] = salt
+            user["hash"] = new_digest
+            save_users(users)
+            drop_other_sessions(self._cookie_token())
+        self._json(200, {"ok": True, "user": {"username": username}})
+
     def _auth_ok(self, username, token, created):
         payload = {"ok": True, "created": created, "user": {"username": username}, "version": VERSION}
         body = json.dumps(payload).encode("utf-8")
@@ -1583,9 +1674,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _validate_account(username, password, confirm):
-    if not USER_RE.match(username):
-        return "username must be 3–32 letters, numbers, dot, underscore, or dash"
+def _validate_password(password, confirm):
     if len(password) < 8:
         return "password must be at least 8 characters"
     if len(password) > 200:
@@ -1593,6 +1682,12 @@ def _validate_account(username, password, confirm):
     if password != confirm:
         return "passwords do not match"
     return None
+
+
+def _validate_account(username, password, confirm):
+    if not USER_RE.match(username):
+        return "username must be 3–32 letters, numbers, dot, underscore, or dash"
+    return _validate_password(password, confirm)
 
 
 def main():

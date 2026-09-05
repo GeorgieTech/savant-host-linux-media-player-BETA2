@@ -1,5 +1,19 @@
 # Changelog
 
+## V0.13 — hostname pin and AirPlay restore
+
+- Pin hostname to `GWH-<uid>` after `savant-init` (which resets `sav-<uid>` on every boot)
+- Start system PulseAudio at boot so TOSLINK / AirPlay / Spotify have `/var/run/pulse/native`
+- AirPlay On is restored after power loss; shairport retries until Pulse is up
+- Settings AirPlay toggle follows the saved On/Off even while the receiver is starting
+- AirPlay stays **AirPlay 1** (`shairport-sync` 3.3.7). AirPlay 2 is not on this Yocto image
+
+## V0.12 — host reset and password
+
+- Settings: **Reboot host** (`POST /api/host/reboot`) — does not write account, EQ, volume, names, or NAS
+- Settings: change password for the signed-in user (`POST /api/auth/password`) — library and host settings stay put
+- Sessions stay in RAM, so a reboot or power loss still requires sign-in
+
 ## V0.11 — i.MX6 performance
 
 - Sign-in and TOSLINK skip no longer ffprobe every library file

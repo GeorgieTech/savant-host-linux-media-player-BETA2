@@ -120,6 +120,7 @@
     }
     .btn:disabled { opacity: 0.5; cursor: default; }
     .err { min-height: 1.2em; color: var(--danger); font-size: 0.85rem; margin: 0; }
+    .err.ok { color: var(--muted); }
     .hint { margin: 16px 0 0; color: var(--muted); font-size: 0.8rem; text-align: center; line-height: 1.45; }
 
     #app {
@@ -931,7 +932,22 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.11</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.13</span></div>
+        <form class="row res-row" id="pw-form">
+          <div class="detail">
+            <div>Password</div>
+            <p>Change the password for this account. Library, EQ, and host settings stay as they are.</p>
+          </div>
+          <div class="set-grid">
+            <label>Current password<input id="pw-current" type="password" autocomplete="current-password" required minlength="8"></label>
+            <label>New password<input id="pw-new" type="password" autocomplete="new-password" required minlength="8"></label>
+            <label>Confirm new password<input id="pw-confirm" type="password" autocomplete="new-password" required minlength="8"></label>
+          </div>
+          <div class="lib-actions">
+            <button class="btn primary" id="pw-save" type="submit">Save password</button>
+          </div>
+          <p class="err" id="pw-note"></p>
+        </form>
         <h3 class="set-h">Internal</h3>
         <div class="row res-row">
           <div class="res-top"><div>Memory</div><span id="mem-left">—</span></div>
@@ -1038,6 +1054,17 @@
             <label>Domain (optional)<input id="nas-domain" type="text" maxlength="64" autocomplete="off" spellcheck="false"></label>
           </div>
         </form>
+        <h3 class="set-h">Host</h3>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>Host reset</div>
+            <p>Reboots this host. Account, EQ, volume, AirPlay / DLNA / Spotify names, and NAS stay on disk. You will need to sign in again after it comes back.</p>
+          </div>
+          <div class="lib-actions">
+            <button class="btn danger" id="btn-reboot" type="button">Reboot host</button>
+          </div>
+        </div>
+        <p class="err" id="reboot-note"></p>
       </div>
     </main>
     <footer class="player">
@@ -2492,6 +2519,52 @@
       try { deck.pause(); } catch (_e) {}
       try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch (_e) {}
       showGate({ setup_required: false });
+    };
+
+    document.getElementById("pw-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const note = document.getElementById("pw-note");
+      const btn = document.getElementById("pw-save");
+      note.textContent = "";
+      note.classList.remove("ok");
+      btn.disabled = true;
+      try {
+        await api("/api/auth/password", {
+          method: "POST",
+          body: JSON.stringify({
+            current: document.getElementById("pw-current").value,
+            password: document.getElementById("pw-new").value,
+            confirm: document.getElementById("pw-confirm").value
+          })
+        });
+        document.getElementById("pw-current").value = "";
+        document.getElementById("pw-new").value = "";
+        document.getElementById("pw-confirm").value = "";
+        note.classList.add("ok");
+        note.textContent = "Password saved. You are still signed in.";
+      } catch (e) {
+        note.textContent = e.message || "could not change password";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById("btn-reboot").onclick = async () => {
+      const note = document.getElementById("reboot-note");
+      const btn = document.getElementById("btn-reboot");
+      if (!window.confirm("Reboot this host now? Account, EQ, volume, names, and NAS stay saved. The page will go down until it comes back.")) {
+        return;
+      }
+      note.textContent = "";
+      btn.disabled = true;
+      try {
+        await api("/api/host/reboot", { method: "POST", body: "{}" });
+        stopAirplayPoll();
+        note.textContent = "Host is rebooting. Wait about a minute, then sign in again.";
+      } catch (e) {
+        btn.disabled = false;
+        note.textContent = e.message || "could not reboot";
+      }
     };
 
     document.querySelectorAll("nav.side button").forEach((btn) => {

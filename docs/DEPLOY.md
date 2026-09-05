@@ -20,19 +20,21 @@ From the repo root:
 ```sh
 scp -O host-webui/index.html host-webui/server.py host-webui/hostplayer.py \
   host-webui/airplay.py host-webui/dlna.py host-webui/spotify.py host-webui/nas.py \
+  host-webui/pin-hostname.sh host-webui/gigawatt-hostname.service \
+  host-webui/gigawatt-pulse.service host-webui/host-webui.service \
   RPM@192.168.1.178:/tmp/
 # Spotify binary (once, or after a go-librespot bump):
 # scp -O -r host-webui/spotify RPM@192.168.1.178:/tmp/spotify
 ssh RPM@192.168.1.178
 sudo -n /usr/bin/env bash -c '
   cp /tmp/index.html /tmp/server.py /tmp/hostplayer.py /tmp/airplay.py \
-    /tmp/dlna.py /tmp/spotify.py /tmp/nas.py /data/www/
-  if [ -d /tmp/spotify ]; then
-    mkdir -p /data/opt/spotify
-    cp -a /tmp/spotify/. /data/opt/spotify/
-    chmod +x /data/opt/spotify/go-librespot /data/opt/spotify/run-spotify
-  fi
-  systemctl restart host-webui.service
+    /tmp/dlna.py /tmp/spotify.py /tmp/nas.py /tmp/pin-hostname.sh /data/www/
+  chmod +x /data/www/pin-hostname.sh
+  cp /tmp/host-webui.service /tmp/gigawatt-hostname.service /tmp/gigawatt-pulse.service \
+    /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl enable gigawatt-hostname.service gigawatt-pulse.service host-webui.service
+  systemctl restart gigawatt-hostname.service gigawatt-pulse.service host-webui.service
 '
 ```
 
