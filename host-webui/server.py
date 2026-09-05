@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.7 — library, browser or TOSLINK, volume, EQ, AirPlay, DLNA, Spotify."""
+"""Gigawatt V0.8 — library, NAS SMB, browser or TOSLINK, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse, unquote
 from airplay import AirPlay, DEFAULT_NAME, sanitize_name
 from dlna import DlnaRenderer
 from hostplayer import HostPlayer
+from nas import NasShare
 from spotify import Spotify
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -28,10 +29,13 @@ STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
-VERSION = "0.7"
+VERSION = "0.8"
 OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 SPOTIFY_DIR = os.environ.get("SPOTIFY_DIR", "/data/opt/spotify")
+NAS_DIR = os.environ.get("NAS_DIR", "/data/nas")
+NAS_BIN = os.environ.get("NAS_BIN", "/data/opt/nas")
+NAS_TRACK_CAP = 2000
 EQ_BANDS = 10
 MAX_UPLOAD = 90 * 1024 * 1024
 COOKIE = "gigawatt_session"
@@ -68,6 +72,7 @@ AIRPLAY = None
 HOST = None
 DLNA = None
 SPOTIFY = None
+NAS = None
 
 
 def _empty_source(name=DEFAULT_NAME):
@@ -94,6 +99,26 @@ def dlna_snapshot():
 
 def spotify_snapshot():
     return SPOTIFY.snapshot() if SPOTIFY is not None else _empty_source()
+
+
+def nas_snapshot():
+    if NAS is None:
+        return {
+            "available": False,
+            "mounted": False,
+            "enabled": False,
+            "host": "",
+            "share": "",
+            "folder": "",
+            "username": "",
+            "domain": "",
+            "password_set": False,
+            "path": "",
+            "mountpoint": NAS_DIR,
+            "error": "",
+            "running": False,
+        }
+    return NAS.snapshot()
 
 
 def _on_airplay_begin():
@@ -127,6 +152,8 @@ def _optical_ended():
         if snap.get("source") == "url":
             if DLNA is not None:
                 DLNA.on_stream_ended()
+            return
+        if snap.get("source") == "nas":
             return
     if load_player().get("output") != "optical":
         return
@@ -470,12 +497,13 @@ def probe_audio(full, size, mtime):
     return info
 
 
-def list_tracks():
-    root = os.path.realpath(MUSIC_DIR)
+def list_tracks(root=None, probe=True, origin="local"):
+    root = os.path.realpath(root or MUSIC_DIR)
     tracks = []
     if not os.path.isdir(root):
         return tracks
-    tags = load_tags()
+    tags = load_tags() if origin == "local" else {}
+    count = 0
     for dirpath, _dirnames, filenames in os.walk(root):
         for filename in filenames:
             ext = os.path.splitext(filename)[1].lower()
@@ -494,35 +522,43 @@ def list_tracks():
             except OSError:
                 size = 0
                 mtime = 0
-            probe = probe_audio(full, size, mtime) if size else {
-                "sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""
-            }
+            if probe and size:
+                info = probe_audio(full, size, mtime)
+            else:
+                info = {"sample_rate": 0, "bit_rate": 0, "hz": "", "bitrate": ""}
             tracks.append(
                 {
                     "name": rel,
                     "title": pretty_title(rel),
                     "ext": ext.lstrip("."),
                     "bytes": size,
-                    "sample_rate": probe["sample_rate"],
-                    "bit_rate": probe["bit_rate"],
-                    "hz": probe["hz"],
-                    "bitrate": probe["bitrate"],
+                    "sample_rate": info["sample_rate"],
+                    "bit_rate": info["bit_rate"],
+                    "hz": info["hz"],
+                    "bitrate": info["bitrate"],
                     "genre": tags.get(rel) or "",
+                    "origin": origin,
                 }
             )
+            count += 1
+            if origin == "nas" and count >= NAS_TRACK_CAP:
+                break
+        if origin == "nas" and count >= NAS_TRACK_CAP:
+            break
     tracks.sort(key=lambda t: t["title"].lower())
     return tracks
 
 
-def safe_media_path(name):
+def safe_media_path(name, origin="local"):
     name = unquote(name or "").replace("\\", "/").lstrip("/")
     if not name or name in (".", "..") or ".." in name.split("/"):
         return None
     ext = os.path.splitext(name)[1].lower()
     if ext not in AUDIO_EXTS:
         return None
-    root = os.path.realpath(MUSIC_DIR)
-    full = os.path.realpath(os.path.join(MUSIC_DIR, name))
+    base = NAS_DIR if origin == "nas" else MUSIC_DIR
+    root = os.path.realpath(base)
+    full = os.path.realpath(os.path.join(base, name))
     if full != root and not full.startswith(root + os.sep):
         return None
     if not os.path.isfile(full):
@@ -807,10 +843,11 @@ class Handler(SimpleHTTPRequestHandler):
                     "airplay": airplay_snapshot(),
                     "dlna": dlna_snapshot(),
                     "spotify": spotify_snapshot(),
+                    "nas": nas_snapshot(),
                 },
             )
             return
-        if path in ("/api/airplay", "/api/now", "/api/dlna", "/api/spotify"):
+        if path in ("/api/airplay", "/api/now", "/api/dlna", "/api/spotify", "/api/nas"):
             if not self._need_user():
                 return
             player = load_player()
@@ -826,6 +863,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "airplay": airplay_snapshot(),
                     "dlna": dlna_snapshot(),
                     "spotify": spotify_snapshot(),
+                    "nas": nas_snapshot(),
                     "hostname": ident.get("hostname"),
                     "ip": ident.get("ip"),
                     "mem": meminfo(),
@@ -838,13 +876,21 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self._json(200, {"ok": True, "tracks": list_tracks(), "genres": list(GENRES)})
             return
+        if path == "/api/nas/library":
+            if not self._need_user():
+                return
+            snap = nas_snapshot()
+            tracks = list_tracks(NAS_DIR, probe=False, origin="nas") if snap.get("mounted") else []
+            self._json(200, {"ok": True, "nas": snap, "tracks": tracks})
+            return
         if path == "/api/media":
             if not self._current_user():
                 self._json(401, {"ok": False, "error": "sign in first"})
                 return
             qs = parse_qs(parsed.query)
             name = (qs.get("name") or [""])[0]
-            full = safe_media_path(name)
+            origin = (qs.get("src") or qs.get("origin") or ["local"])[0]
+            full = safe_media_path(name, origin="nas" if origin == "nas" else "local")
             if not full:
                 self._json(404, {"ok": False, "error": "not found"})
                 return
@@ -862,7 +908,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             qs = parse_qs(parsed.query)
             name = (qs.get("name") or [""])[0]
-            full = safe_media_path(name)
+            origin = (qs.get("src") or qs.get("origin") or ["local"])[0]
+            full = safe_media_path(name, origin="nas" if origin == "nas" else "local")
             if not full:
                 self.send_error(404)
                 return
@@ -940,7 +987,11 @@ class Handler(SimpleHTTPRequestHandler):
             if HOST is None:
                 self._json(409, {"ok": False, "error": "host player missing"})
                 return
-            ok = HOST.play(data.get("name") or "", start=data.get("start") or 0)
+            origin = data.get("source") or data.get("origin") or "local"
+            if origin == "nas":
+                ok = HOST.play(data.get("name") or "", start=data.get("start") or 0, root=NAS_DIR, origin="nas")
+            else:
+                ok = HOST.play(data.get("name") or "", start=data.get("start") or 0, origin="library")
             player = load_player()
             HOST.set_volume(player["volume"])
             self._json(200 if ok else 400, {"ok": ok, "host": HOST.snapshot(), "error": HOST.snapshot().get("error")})
@@ -1080,6 +1131,39 @@ class Handler(SimpleHTTPRequestHandler):
             snap["ok"] = True
             self._json(200, snap)
             return
+        if path == "/api/nas":
+            if not self._need_user():
+                return
+            if NAS is None:
+                self._json(409, {"ok": False, "error": "NAS tools are not available on this host"})
+                return
+            if not NAS.apply(data):
+                snap = nas_snapshot()
+                snap["ok"] = False
+                self._json(400, snap)
+                return
+            want = data.get("enabled")
+            if want is None and "connect" in data:
+                want = data.get("connect")
+            if want is True:
+                ok = NAS.connect()
+                snap = nas_snapshot()
+                snap["ok"] = ok
+                if ok:
+                    snap["tracks"] = list_tracks(NAS_DIR, probe=False, origin="nas")
+                self._json(200 if ok else 409, snap)
+                return
+            if want is False:
+                NAS.disconnect()
+                snap = nas_snapshot()
+                snap["ok"] = True
+                snap["tracks"] = []
+                self._json(200, snap)
+                return
+            snap = nas_snapshot()
+            snap["ok"] = True
+            self._json(200, snap)
+            return
         if path == "/api/library/save":
             if not self._need_user():
                 return
@@ -1181,7 +1265,7 @@ def _validate_account(username, password, confirm):
 
 
 def main():
-    global AIRPLAY, HOST, DLNA, SPOTIFY
+    global AIRPLAY, HOST, DLNA, SPOTIFY, NAS
     ensure_dirs()
     os.chdir(ROOT)
     HOST = HostPlayer(on_end=_optical_ended)
@@ -1207,6 +1291,10 @@ def main():
     )
     if player.get("spotify"):
         SPOTIFY.set_enabled(True)
+    os.makedirs(NAS_DIR, exist_ok=True)
+    NAS = NasShare(NAS_BIN, NAS_DIR, STATE_DIR)
+    if NAS.cfg.get("enabled"):
+        NAS.connect()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print("Gigawatt V%s on 0.0.0.0:%s" % (VERSION, PORT), flush=True)
     try:

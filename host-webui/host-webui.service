@@ -19,6 +19,8 @@ Environment=STATE_DIR=/data/gigawatt
 Environment=PULSE_SERVER=unix:/var/run/pulse/native
 Environment=AIRPLAY_DIR=/data/opt/airplay
 Environment=SPOTIFY_DIR=/data/opt/spotify
+Environment=NAS_BIN=/data/opt/nas
+Environment=NAS_DIR=/data/nas
 
 [Install]
 WantedBy=multi-user.target

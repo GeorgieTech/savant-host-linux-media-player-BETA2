@@ -401,7 +401,12 @@
     .row .detail { max-width: 28rem; }
     .row .detail p { margin: 6px 0 0; color: var(--muted); font-size: 0.82rem; line-height: 1.4; }
     .set-field { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .set-field input[type="text"] {
+    .set-grid { display: grid; gap: 10px; width: 100%; }
+    .set-grid label { text-transform: none; letter-spacing: 0; font-size: 0.78rem; }
+    .set-grid input { width: 100%; max-width: 100%; }
+    .set-field input[type="text"],
+    .set-grid input[type="text"],
+    .set-grid input[type="password"] {
       height: 40px;
       width: min(220px, 50vw);
       border-radius: 10px;
@@ -658,6 +663,7 @@
     <nav class="side" aria-label="App">
       <button type="button" data-view="home" class="on">Home</button>
       <button type="button" data-view="library">Library</button>
+      <button type="button" data-view="nas" id="nav-nas" class="hidden">NAS Music</button>
       <button type="button" data-view="eq">EQ</button>
       <button type="button" data-view="settings">Settings</button>
     </nav>
@@ -700,6 +706,19 @@
       </div>
       <div id="track-list" class="tracks"></div>
     </main>
+    <main class="view hidden" id="view-nas">
+      <div class="lib-head">
+        <h2>NAS Music</h2>
+      </div>
+      <p class="lede" id="nas-lede">Music on the connected share. Tap a row to play it.</p>
+      <p class="lib-log" id="nas-log"></p>
+      <div id="nas-empty" class="empty">
+        <h3>No audio on this share</h3>
+        <p>Connect a NAS folder in Settings, or point the share at a folder with MP3, FLAC, or Opus.</p>
+        <div class="formats"><span>MP3</span><span>FLAC</span><span>Opus</span></div>
+      </div>
+      <div id="nas-track-list" class="tracks"></div>
+    </main>
     <main class="view hidden" id="view-eq">
       <h2>EQ</h2>
       <p class="lede">Ten-band equalizer for this browser. Pick a published in-room target, or drag a band.</p>
@@ -715,7 +734,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.7</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.8</span></div>
         <h3 class="set-h">Internal</h3>
         <div class="row res-row">
           <div class="res-top"><div>Memory</div><span id="mem-left">—</span></div>
@@ -801,6 +820,27 @@
             <button class="btn primary" id="spotify-name-save" type="submit">Save</button>
           </form>
         </div>
+        <h3 class="set-h">NAS</h3>
+        <div class="row airplay-row">
+          <div class="detail">
+            <div>Music folder</div>
+            <p id="nas-note">Off. Connect an SMB share to open the NAS Music page. Audio plays like the local library.</p>
+          </div>
+          <div class="lib-actions">
+            <button class="btn ghost" id="nas-off" type="button">Disconnect</button>
+            <button class="btn primary" id="nas-on" type="button">Connect</button>
+          </div>
+        </div>
+        <form class="row res-row" id="nas-form">
+          <div class="set-grid">
+            <label>Server<input id="nas-host" type="text" maxlength="64" placeholder="192.168.1.10" autocomplete="off" spellcheck="false"></label>
+            <label>Share<input id="nas-share" type="text" maxlength="80" placeholder="Music" autocomplete="off" spellcheck="false"></label>
+            <label>Folder (optional)<input id="nas-folder" type="text" maxlength="120" placeholder="FLAC" autocomplete="off" spellcheck="false"></label>
+            <label>Username<input id="nas-user" type="text" maxlength="64" autocomplete="off" spellcheck="false"></label>
+            <label>Password<input id="nas-pass" type="password" maxlength="128" placeholder="unchanged if blank" autocomplete="off"></label>
+            <label>Domain (optional)<input id="nas-domain" type="text" maxlength="64" autocomplete="off" spellcheck="false"></label>
+          </div>
+        </form>
       </div>
     </main>
     <footer class="player">
@@ -897,7 +937,11 @@
       dlna: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "", name: "Gigawatt" },
       spotify: { available: false, enabled: false, active: false, title: "", artist: "", album: "", client: "", error: "", name: "Gigawatt" },
       bins: new Float32Array(48),
-      uploading: false
+      uploading: false,
+      origin: "local",
+      nasTracks: [],
+      nasIndex: -1,
+      nas: { available: false, mounted: false, host: "", share: "", folder: "", username: "", domain: "", password_set: false, error: "", path: "" }
     };
     let audioCtx = null, analyser = null, freq = null, timeBuf = null;
     let eqNodes = [];
@@ -921,6 +965,7 @@
     }
 
     function showView(name) {
+      if (name === "nas" && !(state.nas && state.nas.mounted)) name = "home";
       document.querySelectorAll("main.view").forEach((el) => el.classList.toggle("hidden", el.id !== "view-" + name));
       document.querySelectorAll("nav.side button").forEach((btn) => btn.classList.toggle("on", btn.dataset.view === name));
       if (name === "home") requestAnimationFrame(resize);
@@ -928,6 +973,7 @@
         paintEq();
         ensureAudio();
       }
+      if (name === "nas") paintNasLibrary();
     }
 
     function fmtTime(sec) {
@@ -938,6 +984,7 @@
     }
 
     function currentTrack() {
+      if (state.origin === "nas") return state.nasTracks[state.nasIndex] || null;
       return state.tracks[state.index] || null;
     }
 
@@ -1117,9 +1164,91 @@
         const ems = btn.querySelectorAll("em");
         ems[0].textContent = track.genre || "";
         ems[1].textContent = formatMeta(track);
-        btn.onclick = () => playIndex(i);
+        btn.onclick = () => playIndex(i, 0, "local");
         list.appendChild(btn);
       });
+    }
+
+    function paintNasLibrary() {
+      const empty = document.getElementById("nas-empty");
+      const list = document.getElementById("nas-track-list");
+      const lede = document.getElementById("nas-lede");
+      const tracks = state.nasTracks || [];
+      empty.classList.toggle("hidden", tracks.length > 0);
+      const snap = state.nas || {};
+      lede.textContent = snap.path
+        ? ("Share " + snap.path + (snap.folder ? "/" + snap.folder : "") + ". Tap a row to play.")
+        : "Music on the connected share. Tap a row to play it.";
+      list.innerHTML = "";
+      tracks.forEach((track, i) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "track" + (state.origin === "nas" && i === state.nasIndex ? " on" : "");
+        btn.innerHTML = "<span class=\"n\">" + String(i + 1).padStart(2, "0") + "</span><span><strong></strong><em></em></span><em></em>";
+        btn.querySelector("strong").textContent = track.title;
+        const ems = btn.querySelectorAll("em");
+        ems[0].textContent = (track.name.split("/").slice(0, -1).join(" / ")) || "NAS";
+        ems[1].textContent = formatMeta(track);
+        btn.onclick = () => playIndex(i, 0, "nas");
+        list.appendChild(btn);
+      });
+    }
+
+    function setNasLog(text, isErr) {
+      const el = document.getElementById("nas-log");
+      el.textContent = text || "";
+      el.classList.toggle("err", !!isErr);
+    }
+
+    function paintNasNav() {
+      const mounted = !!(state.nas && state.nas.mounted);
+      document.getElementById("nav-nas").classList.toggle("hidden", !mounted);
+      if (!mounted) {
+        const nasView = document.getElementById("view-nas");
+        if (nasView && !nasView.classList.contains("hidden")) showView("home");
+      }
+    }
+
+    function paintNasSettings() {
+      const nas = state.nas || {};
+      const onBtn = document.getElementById("nas-on");
+      const offBtn = document.getElementById("nas-off");
+      onBtn.disabled = !nas.available;
+      offBtn.disabled = !nas.available || !nas.mounted;
+      onBtn.classList.toggle("on", !!nas.mounted);
+      offBtn.classList.toggle("on", !nas.mounted);
+      const fill = (id, value) => {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el) el.value = value || "";
+      };
+      fill("nas-host", nas.host);
+      fill("nas-share", nas.share);
+      fill("nas-folder", nas.folder);
+      fill("nas-user", nas.username);
+      fill("nas-domain", nas.domain);
+      let note = "NAS tools are not available on this host.";
+      if (nas.available) {
+        if (nas.error) note = nas.error;
+        else if (nas.mounted) note = "Connected to " + (nas.path || "the share") + ". Open NAS Music.";
+        else note = "Off. Connect an SMB share to open the NAS Music page.";
+      }
+      document.getElementById("nas-note").textContent = note;
+      paintNasNav();
+    }
+
+    function applyNas(snap, tracks) {
+      state.nas = snap || state.nas;
+      if (tracks) state.nasTracks = tracks;
+      if (!(state.nas && state.nas.mounted)) {
+        state.nasTracks = [];
+        if (state.origin === "nas") {
+          state.origin = "local";
+          state.nasIndex = -1;
+        }
+      }
+      paintNasSettings();
+      paintNasLibrary();
+      paintNow({ skipLib: true });
     }
 
     function liveCast() {
@@ -1238,6 +1367,7 @@
       if (data.airplay) applyCast("airplay", data.airplay, paintAirplaySettings);
       if (data.dlna) applyCast("dlna", data.dlna, paintDlnaSettings);
       if (data.spotify) applyCast("spotify", data.spotify, paintSpotifySettings);
+      if (data.nas) applyNas(data.nas);
       if (!data.airplay && !data.dlna && !data.spotify) {
         paintOutputSettings();
         paintNow({ skipLib: true });
@@ -1275,7 +1405,8 @@
         kicker = cast.kicker;
         homeSub = sub;
       } else if (opticalLive) {
-        const ht = state.tracks.find((t) => t.name === host.name);
+        const pool = host.source === "nas" ? state.nasTracks : state.tracks;
+        const ht = pool.find((t) => t.name === host.name);
         title = ht ? ht.title : (host.name || "TOSLINK");
         sub = (ht ? formatMeta(ht) : "") + (ht ? " · " : "") + (host.paused ? "paused · TOSLINK" : "TOSLINK");
         kicker = host.paused ? "Paused" : "Now playing";
@@ -1287,11 +1418,13 @@
       document.getElementById("home-sub").textContent = homeSub;
       document.getElementById("home-kicker").textContent = kicker;
       const live = cast ? false : (state.output === "optical" ? !!host.playing : state.playing);
+      const list = state.origin === "nas" ? state.nasTracks : state.tracks;
       document.getElementById("btn-play").textContent = live ? "❚❚" : "▶";
       document.getElementById("btn-play").disabled = !!cast || !track;
-      document.getElementById("btn-prev").disabled = !!cast || state.tracks.length < 2;
-      document.getElementById("btn-next").disabled = !!cast || state.tracks.length < 2;
+      document.getElementById("btn-prev").disabled = !!cast || list.length < 2;
+      document.getElementById("btn-next").disabled = !!cast || list.length < 2;
       if (!(opts && opts.skipLib)) paintLibrary();
+      if (state.nas && state.nas.mounted) paintNasLibrary();
     }
 
     function fmtGain(n) {
@@ -1442,16 +1575,20 @@
       if (audioCtx.state === "suspended") audioCtx.resume();
     }
 
-    async function playIndex(i, startAt) {
+    async function playIndex(i, startAt, origin) {
       if (airplayOn()) return;
-      const track = state.tracks[i];
+      origin = origin || state.origin || "local";
+      const list = origin === "nas" ? state.nasTracks : state.tracks;
+      const track = list[i];
       if (!track) return;
-      state.index = i;
+      state.origin = origin;
+      if (origin === "nas") state.nasIndex = i;
+      else state.index = i;
       if (state.output === "optical") {
         try {
           const data = await api("/api/play", {
             method: "POST",
-            body: JSON.stringify({ name: track.name, start: startAt || 0 })
+            body: JSON.stringify({ name: track.name, start: startAt || 0, source: origin })
           });
           stopLocalPlayback();
           if (data.host) state.host = data.host;
@@ -1462,7 +1599,7 @@
         }
         return;
       }
-      deck.src = "/api/media?name=" + encodeURIComponent(track.name);
+      deck.src = "/api/media?name=" + encodeURIComponent(track.name) + (origin === "nas" ? "&src=nas" : "");
       ensureAudio();
       const start = deck.play();
       if (start && start.catch) start.catch(() => { state.playing = false; paintNow(); });
@@ -1498,10 +1635,13 @@
     }
 
     function step(delta) {
-      if (!state.tracks.length) return;
-      const n = state.tracks.length;
-      const next = (Math.max(0, state.index) + delta + n) % n;
-      playIndex(next);
+      const origin = state.origin || "local";
+      const list = origin === "nas" ? state.nasTracks : state.tracks;
+      if (!list.length) return;
+      const cur = origin === "nas" ? state.nasIndex : state.index;
+      const n = list.length;
+      const next = (Math.max(0, cur) + delta + n) % n;
+      playIndex(next, 0, origin);
     }
 
     deck.addEventListener("play", () => { state.playing = true; paintNow(); });
@@ -1615,6 +1755,8 @@
       applyCast("airplay", status.airplay || {}, paintAirplaySettings);
       applyCast("dlna", status.dlna || {}, paintDlnaSettings);
       applyCast("spotify", status.spotify || {}, paintSpotifySettings);
+      applyNas(status.nas || {});
+      if (status.nas && status.nas.mounted) loadNasLibrary();
       paintOutputSettings();
       startAirplayPoll();
       resize();
@@ -1764,6 +1906,56 @@
     document.getElementById("spotify-off").onclick = async () => {
       try { applyCast("spotify", await api("/api/spotify", { method: "POST", body: JSON.stringify({ enabled: false }) }), paintSpotifySettings); }
       catch (e) { document.getElementById("spotify-note").textContent = e.message || "could not disable Spotify"; }
+    };
+
+    async function loadNasLibrary() {
+      try {
+        const data = await api("/api/nas/library");
+        applyNas(data.nas, data.tracks || []);
+        const n = (data.tracks || []).length;
+        setNasLog(n ? (n + " track" + (n === 1 ? "" : "s") + " on the share") : "No audio files on this share");
+      } catch (e) {
+        setNasLog(e.message || "could not read NAS library", true);
+      }
+    }
+
+    function nasFormPayload(extra) {
+      const payload = {
+        host: document.getElementById("nas-host").value.trim(),
+        share: document.getElementById("nas-share").value.trim(),
+        folder: document.getElementById("nas-folder").value.trim(),
+        username: document.getElementById("nas-user").value.trim(),
+        domain: document.getElementById("nas-domain").value.trim()
+      };
+      const pass = document.getElementById("nas-pass").value;
+      if (pass) payload.password = pass;
+      return Object.assign(payload, extra || {});
+    }
+
+    document.getElementById("nas-on").onclick = async () => {
+      const btn = document.getElementById("nas-on");
+      btn.disabled = true;
+      document.getElementById("nas-note").textContent = "Connecting…";
+      try {
+        const data = await api("/api/nas", { method: "POST", body: JSON.stringify(nasFormPayload({ enabled: true })) });
+        document.getElementById("nas-pass").value = "";
+        applyNas(data, data.tracks || []);
+        if (data.mounted) {
+          setNasLog(((data.tracks || []).length) + " tracks on the share");
+          showView("nas");
+        }
+      } catch (e) {
+        document.getElementById("nas-note").textContent = e.message || "could not connect";
+      }
+      paintNasSettings();
+    };
+    document.getElementById("nas-off").onclick = async () => {
+      try {
+        applyNas(await api("/api/nas", { method: "POST", body: JSON.stringify({ enabled: false }) }), []);
+        setNasLog("");
+      } catch (e) {
+        document.getElementById("nas-note").textContent = e.message || "could not disconnect";
+      }
     };
 
     document.getElementById("btn-logout").onclick = async () => {

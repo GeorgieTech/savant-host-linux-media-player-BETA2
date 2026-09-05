@@ -8,7 +8,7 @@ This project is **not affiliated with Savant Systems**.
 
 **Do not use 192.168.1.40** (live Carrillos Resident Savant). Beta1 stays on **192.168.1.180**. This tree is **192.168.1.178** only.
 
-## Current status — V0.7
+## Current status — V0.8
 
 Target: **192.168.1.178** (`GWH-001aae0733360000`)
 
