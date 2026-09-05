@@ -1,4 +1,4 @@
-# host-webui (Gigawatt V0.9)
+# host-webui (Gigawatt V0.10)
 
 Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 
@@ -11,7 +11,7 @@ Python 3.8 stdlib server plus one HTML page. Runs on **192.168.1.178:80**.
 - `GET /api/media?name=` — audio stream with HTTP Range (signed in)
 - `POST /api/upload` — multipart `file` fields into `/data/music`
 - `POST /api/volume` — `{volume}` 0–100
-- `POST /api/eq` — `{eq: [10 gains in dB]}`
+- `POST /api/eq` — `{eq: [10 gains in dB]}` (this browser and TOSLINK library/NAS/DLNA)
 - `GET /api/now` — output, host TOSLINK player, AirPlay snapshot
 - `POST /api/output` — `{output: "browser"|"optical"}`
 - `POST /api/play` `{name, start?}` / `/api/pause` / `/api/stop` / `/api/seek` — TOSLINK transport

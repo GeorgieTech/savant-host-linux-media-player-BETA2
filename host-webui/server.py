@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gigawatt V0.9 — library, NAS browse, browser or TOSLINK, AirPlay, DLNA, Spotify."""
+"""Gigawatt V0.10 — library, NAS browse, browser or TOSLINK EQ, AirPlay, DLNA, Spotify."""
 import cgi
 import hashlib
 import json
@@ -29,7 +29,7 @@ STATE_DIR = os.environ.get("STATE_DIR", "/data/gigawatt")
 USERS_FILE = os.path.join(STATE_DIR, "users.json")
 LIBRARY_FILE = os.path.join(STATE_DIR, "library.json")
 PLAYER_FILE = os.path.join(STATE_DIR, "player.json")
-VERSION = "0.9"
+VERSION = "0.10"
 OUTPUTS = ("browser", "optical")
 AIRPLAY_DIR = os.environ.get("AIRPLAY_DIR", "/data/opt/airplay")
 SPOTIFY_DIR = os.environ.get("SPOTIFY_DIR", "/data/opt/spotify")
@@ -1255,7 +1255,9 @@ class Handler(SimpleHTTPRequestHandler):
             if not self._need_user():
                 return
             player = save_player(eq=data.get("eq"))
-            self._json(200, {"ok": True, "eq": player["eq"]})
+            if HOST is not None:
+                HOST.set_eq(player["eq"])
+            self._json(200, {"ok": True, "eq": player["eq"], "host": HOST.snapshot() if HOST else {}})
             return
         if path == "/api/airplay":
             if not self._need_user():
@@ -1498,6 +1500,7 @@ def main():
     HOST = HostPlayer(on_end=_optical_ended)
     player = load_player()
     HOST.set_volume(player["volume"])
+    HOST.set_eq(player["eq"])
     AIRPLAY = AirPlay(AIRPLAY_DIR, on_begin=_on_airplay_begin, name=player.get("airplay_name"))
     if player.get("airplay"):
         AIRPLAY.set_enabled(True)

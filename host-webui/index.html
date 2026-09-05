@@ -918,7 +918,7 @@
     </main>
     <main class="view hidden" id="view-eq">
       <h2>EQ</h2>
-      <p class="lede">Ten-band equalizer for this browser. Pick a published in-room target, or drag a band.</p>
+      <p class="lede">Ten-band equalizer for this browser and for TOSLINK library / NAS playback. Pick a published in-room target, or drag a band.</p>
       <div class="eq-presets" id="eq-presets"></div>
       <p class="eq-note" id="eq-note"></p>
       <div class="eq-board" id="eq-board"></div>
@@ -931,7 +931,7 @@
         <div class="row"><div>Signed in as</div><span id="set-user">—</span></div>
         <div class="row"><div>Host name</div><span id="set-host">—</span></div>
         <div class="row"><div>LAN address</div><span id="set-ip">—</span></div>
-        <div class="row"><div>App version</div><span>Gigawatt V0.9</span></div>
+        <div class="row"><div>App version</div><span>Gigawatt V0.10</span></div>
         <h3 class="set-h">Internal</h3>
         <div class="row res-row">
           <div class="res-top"><div>Memory</div><span id="mem-left">—</span></div>
@@ -1711,7 +1711,7 @@
       document.getElementById("out-optical").classList.toggle("on", optical);
       document.getElementById("out-browser").classList.toggle("on", !optical);
       document.getElementById("output-note").textContent = optical
-        ? "Library playback uses the host TOSLINK jack. EQ in this page does not apply."
+        ? "Library and NAS playback use the host TOSLINK jack. The EQ page applies to that stream."
         : "Library playback uses this browser. TOSLINK stays silent unless AirPlay, Spotify, or DLNA is on.";
     }
 
@@ -1729,8 +1729,8 @@
       paintSourceRow("dlna", state.dlna, {
         missing: "DLNA is not available on this host.",
         idle: "DLNA",
-        on: "On — looks for “%s” in BubbleUPnP, VLC, and other DLNA apps. Audio plays TOSLINK.",
-        off: "Off. When on, this host appears as “%s” in DLNA apps. Audio plays TOSLINK."
+        on: "On — looks for “%s” in BubbleUPnP, VLC, and other DLNA apps. Audio plays TOSLINK. HTTP streams only.",
+        off: "Off. When on, this host appears as “%s” in DLNA apps. Audio plays TOSLINK. HTTP streams only."
       });
       paintCastChip();
     }

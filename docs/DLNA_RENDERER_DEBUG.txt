@@ -1,0 +1,108 @@
+DLNA renderer debug — 2026-09-05
+================================
+Target: host-webui/dlna.py + HostPlayer.play_url on 192.168.1.178.
+No code was deployed. Probes were read-only except SOAP calls that
+do not start audio (GetProtocolInfo, GetTransportInfo,
+GetCurrentTransportActions, Play with no URI, SetNextAVTransportURI).
+
+Live state
+----------
+- player.json: dlna True, name Gigawatt, output optical
+- python3 /data/www/server.py is running (pid 8227)
+- UDP 0.0.0.0:1900 bound (SSDP)
+- TCP 0.0.0.0:49494 listening (description + SOAP)
+- eth0 has IGMP membership 239.255.255.250
+- iptables empty
+- UUID file /data/gigawatt/dlna-uuid =
+  cec168dc-fe09-76e9-aebf-453cd0e58c23
+- ffmpeg protocols: http, httpproxy. No https, no tls
+  (build has --disable-openssl)
+
+What works
+----------
+1. SSDP discover from this LAN Mac and from the host itself.
+   M-SEARCH ST=MediaRenderer gets:
+
+     LOCATION: http://192.168.1.178:49494/device.xml
+     SERVER: Linux/4.14 UPnP/1.0 Gigawatt/0.7
+     USN: uuid:cec168dc-…::urn:schemas-upnp-org:device:MediaRenderer:1
+
+2. GET http://192.168.1.178:49494/device.xml 200 from the Mac.
+   MediaRenderer:1, friendlyName Gigawatt, DMR-1.50,
+   AVTransport / RenderingControl / ConnectionManager with
+   SCPDURL, controlURL, eventSubURL.
+
+3. SCPDs 200. AVTransport and RenderingControl declare LastChange.
+
+4. SOAP GetProtocolInfo 200, Sink includes mpeg/mp3/flac/ogg/opus/wav/aac
+   plus http-get:*:*:*.
+5. SOAP GetTransportInfo 200, STOPPED / OK / 1.
+
+Discovery is not the blocker. Control/play is.
+
+What is broken
+--------------
+1. ffmpeg cannot pull HTTPS
+   ffmpeg -i https://example.com/ → “Protocol not found”.
+   HostPlayer.play_url() accepts https://, then ffmpeg fails with
+   stderr on DEVNULL, so Settings often shows a generic play failed
+   or nothing. iPhone / some Android DLNA apps hand the renderer an
+   https URL. HTTP from BubbleUPnP’s local server should still work.
+
+2. GetCurrentTransportActions is empty
+   Not in AVTransport.xml. SOAP returns HTTP 200 with an empty
+   GetCurrentTransportActionsResponse (no CurrentTransportActions).
+   BubbleUPnP, VLC, and Windows “Cast to Device” use this to decide
+   whether Play/Pause/Seek are allowed. Empty → controls stay dead
+   even though the device is listed.
+
+3. Failed Play is not a UPnP fault
+   Play with no CurrentURI → HTTP 500 and an empty <u:PlayResponse>.
+   Spec wants a SOAP Fault (UPnPError 701/402). Controllers that
+   parse faults vs 500 + empty response mis-handle the error.
+
+4. HTTP Server header is Python, not UPnP
+   device.xml / SOAP replies send:
+     Server: BaseHTTP/0.6 Python/3.8.17
+   SSDP uses a correct SERVER line. Some stacks drop devices whose
+   description HTTP Server header is not “OS/ver UPnP/1.0 Product/ver”.
+
+5. Play errors are silent
+   ffmpeg|paplay stderr is DEVNULL. A bad URI, HTTP 404 from the
+   phone, or the HTTPS protocol miss never reaches dlna.error.
+
+6. Smaller spec gaps (less likely to hide the device, more likely
+   to break a specific app)
+   - No GetCurrentTransportActions / SetNextAVTransportURI in SCPD
+   - Volume has no allowedValueRange 0–100
+   - No iconList
+   - modelNumber still 0.7
+   - SSDP replies omit BOOTID.UPNP.ORG (Sonos/HEOS on this LAN send it)
+   - SOAP 500 path does not emit <s:Fault>
+
+Not the problem
+---------------
+- Port 80 / CAP_NET_BIND_SERVICE (49494 and 1900 are unprivileged)
+- Firewall
+- SSDP multicast join (maddr shows 239.255.255.250 on eth0)
+- Device not advertising (LAN M-SEARCH sees it)
+- “DLNA tools missing” (available() is always True; it is On)
+
+Likely user-visible story
+-------------------------
+Phone finds “Gigawatt”. Tap Play does nothing or errors:
+  - app asked GetCurrentTransportActions, got empty
+  - or SetAVTransportURI + Play with https://, ffmpeg cannot open it
+  - or Play 500 with no SOAP fault
+
+HTTP from BubbleUPnP to a LAN file should still be able to play if
+the controller ignores the empty transport-actions response.
+
+Implemented (V0.10)
+-------------------
+- GetCurrentTransportActions → Play,Pause,Stop,Seek,Next,Previous
+- SOAP Fault envelope on failed Play / missing URI / HTTPS
+- HTTP SERVER: Linux/4.14 UPnP/1.0 Gigawatt/0.10
+- ffmpeg stderr tailed into host player error
+- https:// URIs rejected with a clear error (HTTP only)
+- BOOTID.UPNP.ORG on SSDP, Volume 0–100 range, modelNumber 0.10

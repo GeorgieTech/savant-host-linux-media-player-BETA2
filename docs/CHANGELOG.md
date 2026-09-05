@@ -1,5 +1,12 @@
 # Changelog
 
+## V0.10 — TOSLINK EQ
+
+- DLNA: GetCurrentTransportActions, UPnP SOAP faults, UPnP HTTP SERVER header, HTTPS rejected with a clear error, ffmpeg play errors surfaced
+- The 10-band EQ page applies to host TOSLINK as well as this browser (library, NAS, DLNA)
+- ffmpeg `lowshelf` / `equalizer` / `highshelf` match the on-page bands (Q 1.1)
+- Dragging a band while TOSLINK is playing reapplies after a short pause; AirPlay and Spotify still play the optical jack without these bands
+
 ## V0.9 — NAS Music by Artist / Albums / Tracks
 
 - NAS Music page: toggle **Artists**, **Albums**, and **Tracks**

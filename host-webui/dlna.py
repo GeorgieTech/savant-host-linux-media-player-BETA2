@@ -20,6 +20,9 @@ SSDP_ADDR = "239.255.255.250"
 SSDP_PORT = 1900
 HTTP_PORT = 49494
 NS_SOAP = "http://schemas.xmlsoap.org/soap/envelope/"
+NS_UPNP_ERR = "urn:schemas-upnp-org:control-1-0"
+UPNP_SERVER = "Linux/4.14 UPnP/1.0 Gigawatt/0.10"
+TRANSPORT_ACTIONS = "Play,Pause,Stop,Seek,Next,Previous"
 SINK = ",".join(
     [
         "http-get:*:audio/mpeg:*",
@@ -170,6 +173,15 @@ AVT_SCPD = """<?xml version="1.0"?>
     <action><name>Previous</name><argumentList>
       <argument><name>InstanceID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_InstanceID</relatedStateVariable></argument>
     </argumentList></action>
+    <action><name>GetCurrentTransportActions</name><argumentList>
+      <argument><name>InstanceID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_InstanceID</relatedStateVariable></argument>
+      <argument><name>Actions</name><direction>out</direction><relatedStateVariable>CurrentTransportActions</relatedStateVariable></argument>
+    </argumentList></action>
+    <action><name>SetNextAVTransportURI</name><argumentList>
+      <argument><name>InstanceID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_InstanceID</relatedStateVariable></argument>
+      <argument><name>NextURI</name><direction>in</direction><relatedStateVariable>NextAVTransportURI</relatedStateVariable></argument>
+      <argument><name>NextURIMetaData</name><direction>in</direction><relatedStateVariable>NextAVTransportURIMetaData</relatedStateVariable></argument>
+    </argumentList></action>
   </actionList>
   <serviceStateTable>
     <stateVariable sendEvents="no"><name>TransportState</name><dataType>string</dataType></stateVariable>
@@ -197,9 +209,16 @@ AVT_SCPD = """<?xml version="1.0"?>
     <stateVariable sendEvents="no"><name>AbsoluteTimePosition</name><dataType>string</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>RelativeCounterPosition</name><dataType>i4</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>AbsoluteCounterPosition</name><dataType>i4</dataType></stateVariable>
-    <stateVariable sendEvents="no"><name>A_ARG_TYPE_SeekMode</name><dataType>string</dataType></stateVariable>
+    <stateVariable sendEvents="no"><name>A_ARG_TYPE_SeekMode</name><dataType>string</dataType>
+      <allowedValueList>
+        <allowedValue>REL_TIME</allowedValue>
+        <allowedValue>ABS_TIME</allowedValue>
+        <allowedValue>TRACK_NR</allowedValue>
+      </allowedValueList>
+    </stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_SeekTarget</name><dataType>string</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_InstanceID</name><dataType>ui4</dataType></stateVariable>
+    <stateVariable sendEvents="no"><name>CurrentTransportActions</name><dataType>string</dataType></stateVariable>
     <stateVariable sendEvents="yes"><name>LastChange</name><dataType>string</dataType></stateVariable>
   </serviceStateTable>
 </scpd>
@@ -233,7 +252,9 @@ RCS_SCPD = """<?xml version="1.0"?>
   <serviceStateTable>
     <stateVariable sendEvents="yes"><name>LastChange</name><dataType>string</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>Mute</name><dataType>boolean</dataType></stateVariable>
-    <stateVariable sendEvents="no"><name>Volume</name><dataType>ui2</dataType></stateVariable>
+    <stateVariable sendEvents="no"><name>Volume</name><dataType>ui2</dataType>
+      <allowedValueRange><minimum>0</minimum><maximum>100</maximum><step>1</step></allowedValueRange>
+    </stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_Channel</name><dataType>string</dataType></stateVariable>
     <stateVariable sendEvents="no"><name>A_ARG_TYPE_InstanceID</name><dataType>ui4</dataType></stateVariable>
   </serviceStateTable>
@@ -278,8 +299,24 @@ CM_SCPD = """<?xml version="1.0"?>
 """
 
 
+def _soap_fault(code, description):
+    return (
+        '<?xml version="1.0"?>'
+        '<s:Envelope xmlns:s="%s" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+        "<s:Body><s:Fault><faultcode>s:Client</faultcode><faultstring>UPnPError</faultstring>"
+        "<detail><u:UPnPError xmlns:u=\"%s\"><errorCode>%s</errorCode>"
+        "<errorDescription>%s</errorDescription></u:UPnPError></detail>"
+        "</s:Fault></s:Body></s:Envelope>"
+    ) % (NS_SOAP, NS_UPNP_ERR, int(code), escape(str(description or "Action Failed")))
+
+
 class _DlnaHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    server_version = UPNP_SERVER
+    sys_version = ""
+
+    def version_string(self):
+        return UPNP_SERVER
 
     def log_message(self, fmt, *args):
         return
@@ -301,12 +338,16 @@ class _DlnaHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/xml; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
+        self.send_header("SERVER", UPNP_SERVER)
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(raw)
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
         payload = self.rfile.read(length) if length else b""
         soap = self.headers.get("SOAPAction") or self.headers.get("Soapaction") or ""
         action = soap.strip().strip('"').split("#")[-1]
@@ -333,18 +374,27 @@ class _DlnaHandler(BaseHTTPRequestHandler):
         elif "ConnectionManager" in path:
             service = "ConnectionManager"
         ok, out = self.server.renderer.handle_action(service, action, args)
-        inner = "".join("<%s>%s</%s>" % (k, escape(str(v)), k) for k, v in out.items())
-        xml = (
-            '<?xml version="1.0"?>'
-            '<s:Envelope xmlns:s="%s" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
-            "<s:Body><u:%sResponse xmlns:u=\"urn:schemas-upnp-org:service:%s:1\">%s</u:%sResponse></s:Body>"
-            "</s:Envelope>"
-        ) % (NS_SOAP, action, service, inner, action)
-        raw = xml.encode("utf-8")
-        self.send_response(200 if ok else 500)
+        out = out or {}
+        if not ok:
+            fault = out.get("_fault") or (501, "Action Failed")
+            raw = _soap_fault(fault[0], fault[1]).encode("utf-8")
+            self.send_response(500)
+        else:
+            inner = "".join(
+                "<%s>%s</%s>" % (k, escape(str(v)), k) for k, v in out.items() if not str(k).startswith("_")
+            )
+            xml = (
+                '<?xml version="1.0"?>'
+                '<s:Envelope xmlns:s="%s" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+                "<s:Body><u:%sResponse xmlns:u=\"urn:schemas-upnp-org:service:%s:1\">%s</u:%sResponse></s:Body>"
+                "</s:Envelope>"
+            ) % (NS_SOAP, action or "Unknown", service, inner, action or "Unknown")
+            raw = xml.encode("utf-8")
+            self.send_response(200)
         self.send_header("Content-Type", 'text/xml; charset="utf-8"')
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("EXT", "")
+        self.send_header("SERVER", UPNP_SERVER)
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(raw)
@@ -399,6 +449,9 @@ class DlnaRenderer:
         self.ssdp_sock = None
         self.stop_event = threading.Event()
         self.subs = []
+        self.bootid = str(int(time.time()))
+        self.next_uri = ""
+        self.next_meta = ""
 
     def available(self):
         return True
@@ -505,7 +558,7 @@ class DlnaRenderer:
     <friendlyName>%s</friendlyName>
     <manufacturer>Gigawatt</manufacturer>
     <modelName>Gigawatt</modelName>
-    <modelNumber>0.7</modelNumber>
+    <modelNumber>0.10</modelNumber>
     <UDN>%s</UDN>
     <dlna:X_DLNADOC>DMR-1.50</dlna:X_DLNADOC>
     <serviceList>
@@ -537,6 +590,7 @@ class DlnaRenderer:
 
     def _start(self):
         self.stop_event.clear()
+        self.bootid = str(int(time.time()))
         try:
             http = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), _DlnaHandler)
             http.renderer = self
@@ -620,10 +674,12 @@ class DlnaRenderer:
                 "LOCATION: %s\r\n"
                 "NT: %s\r\n"
                 "NTS: %s\r\n"
-                "SERVER: Linux/4.14 UPnP/1.0 Gigawatt/0.7\r\n"
+                "SERVER: %s\r\n"
                 "USN: %s\r\n"
+                "BOOTID.UPNP.ORG: %s\r\n"
+                "CONFIGID.UPNP.ORG: 1\r\n"
                 "\r\n"
-            ) % (SSDP_ADDR, SSDP_PORT, loc, nt, nts, usn)
+            ) % (SSDP_ADDR, SSDP_PORT, loc, nt, nts, UPNP_SERVER, usn, self.bootid)
             try:
                 sock.sendto(msg.encode("utf-8"), (SSDP_ADDR, SSDP_PORT))
             except Exception:
@@ -665,11 +721,13 @@ class DlnaRenderer:
                     "DATE: %s\r\n"
                     "EXT:\r\n"
                     "LOCATION: %s\r\n"
-                    "SERVER: Linux/4.14 UPnP/1.0 Gigawatt/0.7\r\n"
+                    "SERVER: %s\r\n"
                     "ST: %s\r\n"
                     "USN: %s\r\n"
+                    "BOOTID.UPNP.ORG: %s\r\n"
+                    "CONFIGID.UPNP.ORG: 1\r\n"
                     "\r\n"
-                ) % (date, loc, nt, usn)
+                ) % (date, loc, UPNP_SERVER, nt, usn, self.bootid)
                 try:
                     sock.sendto(msg.encode("utf-8"), addr)
                 except Exception:
@@ -754,20 +812,29 @@ class DlnaRenderer:
                 self.album = info["album"]
                 self.duration = info["duration"]
                 self.state = "STOPPED"
+                if self.uri.lower().startswith("https://"):
+                    self.error = "DLNA HTTPS is not supported on this host (HTTP only)"
+                    return False, {"_fault": (714, "HTTPS is not supported")}
+                self.error = ""
             elif action == "Play":
                 if not self.uri:
-                    return False, {}
+                    self.error = "no stream URI"
+                    return False, {"_fault": (402, "No AVTransport URI")}
+                if self.uri.lower().startswith("https://"):
+                    self.error = "DLNA HTTPS is not supported on this host (HTTP only)"
+                    self.state = "STOPPED"
+                    return False, {"_fault": (714, "HTTPS is not supported")}
                 ok = True
                 if self.player is not None:
                     ok = self.player.play_url(self.uri, title=self.title, duration=self.duration)
                     if ok:
-                        self.player.set_volume(self._volume())
+                        self.player.set_volume(0 if self.muted else self._volume())
                 self.state = "PLAYING" if ok else "STOPPED"
                 if not ok:
                     self.error = (self.player.snapshot().get("error") if self.player else "play failed") or "play failed"
-                else:
-                    self.error = ""
-                    begin = True
+                    return False, {"_fault": (701, self.error)}
+                self.error = ""
+                begin = True
             elif action == "Pause":
                 if self.player is not None:
                     self.player.pause()
@@ -797,8 +864,8 @@ class DlnaRenderer:
                     "MediaDuration": dur,
                     "CurrentURI": self.uri,
                     "CurrentURIMetaData": self.meta,
-                    "NextURI": "",
-                    "NextURIMetaData": "",
+                    "NextURI": self.next_uri,
+                    "NextURIMetaData": self.next_meta,
                     "PlayMedium": "NETWORK",
                     "RecordMedium": "NOT_IMPLEMENTED",
                     "WriteStatus": "NOT_IMPLEMENTED",
@@ -833,6 +900,20 @@ class DlnaRenderer:
             elif action == "GetTransportSettings":
                 return True, {"PlayMode": "NORMAL", "RecQualityMode": "NOT_IMPLEMENTED"}
             elif action in ("Next", "Previous"):
+                return True, {}
+            elif action == "GetCurrentTransportActions":
+                if not self.uri:
+                    actions = ""
+                elif self.state == "PLAYING":
+                    actions = "Pause,Stop,Seek,Next,Previous"
+                elif self.state == "PAUSED_PLAYBACK":
+                    actions = "Play,Stop,Seek,Next,Previous"
+                else:
+                    actions = TRANSPORT_ACTIONS
+                return True, {"Actions": actions, "CurrentTransportActions": actions}
+            elif action == "SetNextAVTransportURI":
+                self.next_uri = (args.get("NextURI") or "").strip()
+                self.next_meta = args.get("NextURIMetaData") or ""
                 return True, {}
         if action in ("SetAVTransportURI", "Play", "Pause", "Stop", "Seek"):
             self._notify("AVTransport")
