@@ -1,6 +1,6 @@
 # Spotify Connect runtime (Gigawatt)
 
-armv7hf `go-librespot` **v0.9.0** (`linux_armv6` build). ALSA `pulse` plugin into Pulse, then TOSLINK.
+armv7hf `go-librespot` **v0.9.0**. Native **pulseaudio** backend into Pulse (`PULSE_SERVER`), then TOSLINK. Do not use ALSA device `pulse` — this Yocto image has Pulse, not the ALSA pulse plugin.
 
 Installed on the host as `/data/opt/spotify`. Settings starts and stops it.
 

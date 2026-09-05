@@ -1,0 +1,60 @@
+Spotify Connect debug — 2026-09-05
+==================================
+Target code: host-webui/spotify.py + go-librespot v0.9.0 (armv7).
+This VM cannot execute the ARM binary. Status-mapping bugs were
+reproduced with host-webui/test_spotify.py. Audio-backend and
+binary-path issues are from the binary strings + go-librespot 0.9
+docs + this Yocto image (Pulse, no apt, no ALSA pulse plugin).
+
+What was broken
+---------------
+1. Empty /status looked like "playing"
+   go-librespot returns HTTP 204 with an empty body when nobody
+   has connected. Python urllib does not raise on 204. The wrapper
+   turned that into {} and then:
+
+     active = not stopped and bool(track.name or not paused)
+
+   Missing "stopped" is false, so active became True. The web UI
+   then treated Spotify as a live cast: Home jumped to Spotify,
+   Play/Prev/Next disabled, library takeover, TOSLINK auto-advance
+   blocked. Connect looked "stuck on" with no song.
+
+2. Audio went through ALSA device "pulse"
+   Config was audio_backend: alsa / audio_device: pulse. The
+   shipped binary includes a native pulseaudio backend
+   (output.pulseAudioOutput). This Savant image has Pulse
+   (paplay / shairport pa) but is not a Debian box with
+   libasound_module_pcm_pulse. Result: device can appear in
+   Spotify and then fail when a track starts, with stderr
+   discarded so Settings showed no error.
+
+3. Binary path was only /data/opt/spotify
+   available() was false if the UI lived in /data/www and the
+   binary was only next to spotify.py. Settings: "Spotify
+   Connect is not available on this host."
+
+4. Failed starts were silent
+   stdout/stderr were DEVNULL. A missing lib, stale lockfile
+   ("go-librespot is already running"), or Pulse auth error
+   left error="". The On button looked like it worked, then
+   the next poll showed Off.
+
+What we changed
+---------------
+- session_from_status(): idle unless a username or track name
+  exists and stopped is false. 204 / {} / None → idle.
+- config: audio_backend pulseaudio + Pulse socket.
+- resolve_runtime_dir(): /data/opt/spotify or host-webui/spotify.
+- Log to /data/gigawatt/spotify/go-librespot.log; surface the tail
+  if the process dies. Drop a stale lockfile before start.
+- Wait 0.5s after spawn; if it already exited, return that error.
+- prefer_firewall_friendly_ports: try 443/80 before 4070.
+
+On the SHC-2000 after deploy
+----------------------------
+Turn Spotify On. Settings should stay On without a now-playing
+chip. Phone: Connect to the advertised name (Premium). TOSLINK
+should take the stream; Home should show title/artist. Off
+should drop the advertisement. If On fails, the note should
+quote the log tail instead of going blank.

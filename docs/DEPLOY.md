@@ -18,10 +18,20 @@ Savant images on the eMMC are not deleted.
 From the repo root:
 
 ```sh
-scp -O host-webui/index.html host-webui/server.py host-webui/dlna.py host-webui/spotify.py RPM@192.168.1.178:/tmp/
+scp -O host-webui/index.html host-webui/server.py host-webui/hostplayer.py \
+  host-webui/airplay.py host-webui/dlna.py host-webui/spotify.py host-webui/nas.py \
+  RPM@192.168.1.178:/tmp/
+# Spotify binary (once, or after a go-librespot bump):
+# scp -O -r host-webui/spotify RPM@192.168.1.178:/tmp/spotify
 ssh RPM@192.168.1.178
 sudo -n /usr/bin/env bash -c '
-  cp /tmp/index.html /tmp/server.py /data/www/
+  cp /tmp/index.html /tmp/server.py /tmp/hostplayer.py /tmp/airplay.py \
+    /tmp/dlna.py /tmp/spotify.py /tmp/nas.py /data/www/
+  if [ -d /tmp/spotify ]; then
+    mkdir -p /data/opt/spotify
+    cp -a /tmp/spotify/. /data/opt/spotify/
+    chmod +x /data/opt/spotify/go-librespot /data/opt/spotify/run-spotify
+  fi
   systemctl restart host-webui.service
 '
 ```

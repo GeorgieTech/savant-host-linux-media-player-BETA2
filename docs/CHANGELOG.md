@@ -1,5 +1,12 @@
 # Changelog
 
+## Spotify Connect fixes (after V0.8)
+
+- Idle Connect no longer looks “playing” (empty /status 204 was locking the UI)
+- go-librespot uses the Pulse backend, not ALSA device `pulse`
+- Finds the binary next to the UI if `/data/opt/spotify` is missing
+- Start failures write a log and show the last lines in Settings
+
 ## V0.8 — NAS SMB music folder
 
 - Settings: connect an SMB share (server, share, folder, user, password)
