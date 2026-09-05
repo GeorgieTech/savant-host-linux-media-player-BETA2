@@ -1,0 +1,198 @@
+Gigawatt Beta2 — improvement recommendations
+============================================
+Date: 2026-09-05
+Tied to LEVEL1_DEBUG_NOTES.txt. Priority is “what to change first
+on this appliance,” not a rewrite.
+
+
+A. Do these first (security / deploy foot-guns)
+-----------------------------------------------
+
+1. Serve only the UI, not the repo
+   Stop using SimpleHTTPRequestHandler as a file tree.
+   Map GET / and GET /index.html to index.html. 404 everything
+   else that is not an /api/* route you own (and a favicon if
+   you add one). Do not ship airplay/ under the HTTP root.
+
+   How: in Handler.do_GET / do_HEAD, after the API branches,
+   if path is / or /index.html, open index.html yourself and
+   return it. Else 404. Drop directory=ROOT serving.
+
+2. Treat a broken users.json as locked, not empty
+   If the file exists but does not parse, return 503 and refuse
+   /api/auth/setup. Only allow setup when the file is missing
+   or the users list is a real empty list.
+
+3. Deploy the modules the process imports
+   Update docs/DEPLOY.md and host-webui/README.md to copy
+   server.py, index.html, hostplayer.py, and airplay.py into
+   /data/www. A restart after a “README deploy” currently
+   ImportError-loops systemd.
+
+4. Validate Content-Length before int()
+   In _read_json and save_uploads, treat a non-integer or
+   negative Content-Length as 400. Same for upload.
+
+5. One path helper for every file operation
+   Use safe_media_path() (or a shared function) in
+   HostPlayer.play(), not a second weaker check. Reject
+   names that are not in AUDIO_EXTS.
+
+
+B. Playback and AirPlay behavior
+--------------------------------
+
+6. Split “browser volume” from “Pulse volume”
+   Persist one number if you want a single slider, but only
+   call pactl when output is optical or AirPlay is active.
+   Or keep two values (page vs sink) so the dock slider does
+   not duck an iPhone stream.
+
+7. Clear AirPlay active on Pulse idle
+   If _pulse_airplay_playing() is false for N seconds, set
+   active False and clear title/artist/album even if pend
+   never arrived. Re-enable transport in the UI.
+
+8. Do not auto-advance on ffmpeg failure
+   Pass the process return code into _watch. on_end should
+   fire only on a clean exit near duration. On error, set
+   self.error and stop. Optionally skip once, never loop.
+
+9. Optical Play should play, not only pause
+   If host.playing is false and host.paused is false, Play
+   should POST /api/play with the current track (and last
+   position if you have one). Keep /api/pause for the
+   pause/resume toggle.
+
+10. Stop the host player when the file is deleted
+    delete_track / commit_library: if HOST.name matches,
+    HOST.stop() first. Same on logout if you want “sign
+    out means this room goes quiet.”
+
+11. Fix Range: bytes=-N
+    When the left-hand number is empty, start = size - N,
+    end = size - 1 (clamped). Keep bytes=N- and bytes=N-M
+    as they are.
+
+
+C. Upload and library
+---------------------
+
+12. Enforce 90 MB while writing, not after
+    Track bytes in the copy loop; abort and unlink .part
+    as soon as the cap is crossed. Cap Content-Length at
+    MAX_UPLOAD (plus a small multipart overhead), not
+    MAX_UPLOAD * 8, unless you truly accept a multi-file
+    POST that large.
+
+13. Check free space on /data before accept
+    disk_usage() already exists. Refuse upload when free
+    < incoming size + a reserve (for example 100 MB) so
+    the 3.1 GB partition cannot be wedged.
+
+14. Allow ".." inside a basename
+    Check path parts, not a raw substring. "track..2.mp3"
+    should upload.
+
+15. Consume POST bodies on 401
+    For /api/upload, read/discard Content-Length bytes
+    (or fail the connection) before returning 401 so a
+    later HTTP/1.1 keep-alive cannot desync.
+
+
+D. Hardening the LAN service
+----------------------------
+
+16. Lock the session map and player.json
+    Use LOCK (or a dedicated lock) around SESSIONS,
+    save_player, and PROBE_CACHE. Cheap on this box.
+
+17. Login backoff
+    After N failures from one peer, sleep or 429. Stops
+    a LAN brute-force of the 8-character password.
+
+18. Raise PBKDF2 rounds when you next touch auth
+    80k was fine in 2020. 200k–600k is a better default
+    for SHA-256 on a quad A9 if setup/login stay rare.
+    Keep the iteration count in the user record so old
+    hashes still verify.
+
+19. systemd sandbox extras (optional)
+    NoNewPrivileges=yes, ProtectSystem=strict, and bind
+    ReadWritePaths=/data/music /data/gigawatt /data/opt/airplay
+    /tmp. The unit already limits capabilities.
+
+20. FIFO mode 0600 owned by RPM
+    shairport-sync and the UI run as the same user; 0666
+    is not required.
+
+
+E. UI / product
+---------------
+
+21. Self-host the font or drop the Google links
+    Matches “nothing is sent to the cloud” and works on a
+    phone that has LAN to 192.168.1.178 but no WAN. Manrope
+    files in /data/www/static/ is enough.
+
+22. Pause the visualizer and slow /api/now
+    Run rAF only on the Home view. Poll /api/now every 1s
+    while AirPlay or TOSLINK is live; every 5–10s on
+    Settings; stop on the login gate (already stopped).
+
+23. Honest empty / error gate
+    If /api/auth/status fails, do not flip setup_required.
+    Show the “service unreachable” hint only.
+
+24. Align advertised formats
+    Either drop ogg/wav/m4a/aac from AUDIO_EXTS and the
+    file picker, or list them in the API, empty-library
+    chips, and README.
+
+25. EQ for TOSLINK (later feature)
+    Today EQ is Web Audio only. A host-side ffmpeg
+    equalizer, or Pulse module-equalizer-sink, would make
+    the EQ page matter when Audio out is TOSLINK.
+
+26. Queue / repeat / one-album
+    _optical_ended already wraps the full library. A
+    small in-memory queue (repeat one / repeat all / stop)
+    avoids surprise wrap-around at end of album.
+
+
+F. Docs and versioning
+----------------------
+
+27. Bring README, ARCHITECTURE, DEPLOY, CHANGELOG, and
+    host-webui/README to V0.6 in one pass:
+      - TOSLINK + AirPlay 1 are in
+      - file list to copy
+      - full /api table (already close in host-webui/README)
+      - “do not use .40 / .180” stays
+
+28. Pin VERSION in one place
+    index.html hard-codes “Gigawatt V0.6”. server.py has
+    VERSION = "0.6". Prefer the API version on the Settings
+    row so a stale HTML copy is obvious.
+
+29. Add a tiny smoke script
+    Python 3.8 stdlib: start on WEBUI_PORT, assert
+    /server.py is 404, setup/login, media range, play
+    rejects .txt. Fits this repo better than a framework.
+
+
+G. What not to do yet
+---------------------
+  HTTPS on this Yocto image is more ops than code.
+  A SPA rewrite or a second process does not fix the
+  Level 1 items.
+  Cloud accounts would fight the “local only” design.
+
+
+H. Suggested order of work
+--------------------------
+  1. Static-file lockdown + users.json fail-closed + deploy docs
+  2. safe_media_path in HostPlayer + Range suffix + Content-Length
+  3. Volume/AirPlay/auto-advance/Play-button behavior
+  4. Upload caps and free-space check
+  5. Fonts, poll/viz load, format list, README sweep
