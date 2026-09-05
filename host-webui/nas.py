@@ -167,12 +167,15 @@ class NasShare:
                 str(os.getuid()),
                 "--gid",
                 str(os.getgid()),
+                "--allow-other",
+                "--log-file",
+                "/tmp/gigawatt-rclone.log",
             ]
             try:
                 self.proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     env=env,
                     preexec_fn=os.setsid,
                 )
@@ -183,12 +186,14 @@ class NasShare:
             for _ in range(40):
                 time.sleep(0.25)
                 if self.proc.poll() is not None:
-                    err = b""
+                    err = ""
                     try:
-                        err = self.proc.stderr.read() if self.proc.stderr else b""
+                        with open("/tmp/gigawatt-rclone.log") as fh:
+                            lines = fh.read().strip().splitlines()
+                        err = lines[-1] if lines else ""
                     except Exception:
                         pass
-                    self.error = (err.decode("utf-8", "replace") or "mount failed").strip().split("\n")[-1][:180]
+                    self.error = (err or "mount failed").strip()[:180]
                     self.proc = None
                     return False
                 if self.mounted():
